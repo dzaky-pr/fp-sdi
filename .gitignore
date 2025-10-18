@@ -1,0 +1,266 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+.idea/
+
+# Docker
+.docker/
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Docker volumes data
+milvus_data/
+qdrant_data/
+weaviate_data/
+
+# Vector database specific
+# Milvus
+milvus/volumes/
+milvus/logs/
+milvus/*.log
+
+# Qdrant 
+qdrant/storage/
+qdrant/*.log
+
+# Weaviate
+weaviate/data/
+weaviate/*.log
+
+# Benchmark results
+results/
+*.csv
+*.json
+bench_results_*.json
+benchmark_*.csv
+*.results
+
+# Dataset files (large files)
+datasets/*.npy
+datasets/*.hdf5
+datasets/*.h5
+datasets/*.bin
+datasets/*.fvecs
+datasets/*.ivecs
+datasets/*.bvecs
+datasets/*.txt
+datasets/*/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log.*
+
+# Performance monitoring outputs
+*.prof
+*.pprof
+perf.data*
+callgrind.out.*
+
+# I/O monitoring traces
+*.trace
+io_trace_*
+bpftrace_*
+
+# fio benchmark outputs
+fio_*
+*.fio
+
+# System monitoring
+*.iostat
+*.sar
+*.vmstat
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Compressed files (unless needed)
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# LaTeX (if generating reports)
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.synctex.gz
+*.toc
+
+# Generated plots/graphs
+plots/
+figures/
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+!paper_rujukan.pdf
+
+# Configuration overrides
+config.local.*
+.env.local
+docker-compose.prod.yml
+
+# Test outputs
+test_results/
+validation_results/
+

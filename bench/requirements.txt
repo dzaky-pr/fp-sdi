@@ -1,0 +1,12 @@
+numpy>=1.26
+scipy>=1.11
+pandas>=2.2
+psutil>=5.9
+docker>=7.0
+requests>=2.32
+PyYAML>=6.0.1
+
+# clients
+pymilvus==2.5.2
+qdrant-client==1.9.1
+weaviate-client==3.25.3

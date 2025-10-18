@@ -1,0 +1,61 @@
+seed: 42
+datasets:
+  - name: cohere-mini-200k-d768
+    n_vectors: 200000
+    dim: 768
+    n_queries: 1000
+  - name: openai-mini-50k-d1536
+    n_vectors: 50000
+    dim: 1536
+    n_queries: 1000
+
+concurrency_grid: [1, 2, 4, 8, 16, 32] # aman untuk 4-core laptop
+run_seconds: 30
+repeats: 5
+target_recall_at_k: 0.9
+topk: 10
+
+indexes:
+  milvus:
+    ivf:
+      metric: "IP" # atau "COSINE"/"L2" sesuai pipeline
+      build:
+        nlist_from_rule: true # 4*sqrt(n)
+      search:
+        nprobe_start: 8
+        nprobe_max: 64
+    hnsw:
+      metric: "IP"
+      build:
+        M: 16
+        efConstruction: 200
+      search:
+        efSearch_start: 16
+        efSearch_max: 128
+    diskann:
+      metric: "IP"
+      build: {}
+      search:
+        search_list_start: 10
+        search_list_max: 100
+
+  qdrant:
+    hnsw:
+      metric: "Cosine" # Qdrant default cocok untuk cosine
+      build:
+        m: 16
+        ef_construct: 200
+      search:
+        ef_search_start: 64
+        ef_search_max: 256
+      on_disk: true # hemat RAM (memmap)
+
+  weaviate:
+    hnsw:
+      metric: "cosine"
+      build:
+        maxConnections: 16
+        efConstruction: 200
+      search:
+        ef_start: 64
+        ef_max: 256
