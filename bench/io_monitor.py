@@ -62,6 +62,8 @@ class IOMonitor:
             self.results['iostat_stderr'] = result.stderr
         except Exception as e:
             self.results['error'] = f"iostat fallback failed: {e}"
+            # Final fallback: skip I/O monitoring
+            self.results['skipped'] = True
 
     def stop_monitoring(self):
         self.monitoring = False
@@ -74,6 +76,8 @@ class IOMonitor:
 
     def parse_bandwidth(self) -> Dict[str, float]:
         parsed = {'read_mb': 0.0, 'write_mb': 0.0, 'total_mb': 0.0, 'avg_bandwidth_mb_s': 0.0}
+        if 'skipped' in self.results:
+            return parsed  # Return zeros if skipped
         if 'bpftrace_output' in self.results:
             out = self.results['bpftrace_output']
             for line in out.splitlines():
@@ -103,9 +107,9 @@ class IOMonitor:
 def run_fio_baseline(target_dir: str = "/datasets", duration: int = 30) -> Dict:
     baseline_results = {}
     tests = [
-        {'name': 'random_4k_read', 'params': f'--name=rand4k --rw=randread --bs=4k --numjobs=1 --runtime={duration} --time_based --direct=1'},
-        {'name': 'sequential_read', 'params': f'--name=seqread --rw=read --bs=1M --numjobs=1 --runtime={duration} --time_based --direct=1'},
-        {'name': 'random_4k_write','params': f'--name=rand4kw --rw=randwrite --bs=4k --numjobs=1 --runtime={duration} --time_based --direct=1'},
+        {'name': 'random_4k_read', 'params': f'--name=rand4k --rw=randread --bs=4k --numjobs=1 --runtime={duration} --time_based --size=256M'},
+        {'name': 'sequential_read', 'params': f'--name=seqread --rw=read --bs=1M --numjobs=1 --runtime={duration} --time_based --direct=1 --size=256M'},
+        {'name': 'random_4k_write','params': f'--name=rand4kw --rw=randwrite --bs=4k --numjobs=1 --runtime={duration} --time_based --size=256M'},
     ]
     os.makedirs(target_dir, exist_ok=True)
     test_file = os.path.join(target_dir, "fio_test.tmp")

@@ -2,8 +2,8 @@
 x-common-env: &common_env
   TZ: Asia/Jakarta
 
-# Gunakan NVME_ROOT untuk mount NVMe; default ke ./nvme jika tidak di-set.
-# export NVME_ROOT=/Volumes/NVMe/vdb   (contoh di macOS)
+# Gunakan NVME_ROOT untuk NVMe internal macOS; default ke ./nvme jika tidak set.
+# export NVME_ROOT=/Users/dzakyrifai/nvme-vdb (contoh setup aman untuk macOS internal SSD)
 services:
   milvus:
     image: milvusdb/milvus:v2.5.11
@@ -70,6 +70,11 @@ services:
     entrypoint:
       ["/bin/sh", "-lc", "apk add --no-cache fio && tail -f /dev/null"]
     volumes:
-      - ${NVME_ROOT:-./nvme}/milvus:/target
+      - ${NVME_ROOT:-./nvme}/fio:/target
 
-volumes: {}
+volumes:
+  temp_nvme:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs

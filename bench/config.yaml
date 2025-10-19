@@ -1,67 +1,65 @@
-# bench/config.yaml
-seed: 42
-pdf_dir: "" # Disable PDF embedding, use synthetic
-embedder: "sentence-transformers" # or "cohere"
+concurrency_grid:
+- 1
+- 2
+data_root: ./datasets
 datasets:
-  - name: cohere-mini-200k-d768
-    n_vectors: 50000 # Reduced for laptop
-    dim: 768
-    n_queries: 1000
-  - name: openai-mini-50k-d1536
-    n_vectors: 50000
-    dim: 1536
-    n_queries: 1000
-
-concurrency_grid: [1, 2, 4, 8, 16, 32]
-run_seconds: 30
-repeats: 5
-target_recall_at_k: 0.9
-topk: 10
-enable_payload_filter: true # Enable payload/metadata and filter experiments
-enable_hybrid_search: true # Enable hybrid search for Weaviate
-sensitivity_study: true # Enable parameter sensitivity study
-
+- dim: 768
+  n_queries: 1000
+  n_vectors: 50000
+  name: cohere-mini-200k-d768
+- dim: 1536
+  n_queries: 1000
+  n_vectors: 50000
+  name: openai-mini-50k-d1536
+embedder: sentence-transformers
+enable_hybrid_search: true
+enable_payload_filter: true
 indexes:
   milvus:
-    ivf:
-      metric: "IP"
-      build:
-        nlist_from_rule: true
+    diskann:
+      build: {}
+      metric: IP
       search:
-        nprobe_start: 8
-        nprobe_max: 64
+        search_list_max: 100
+        search_list_start: 10
     hnsw:
-      metric: "IP"
       build:
         M: 16
         efConstruction: 200
+      metric: IP
       search:
-        efSearch_start: 16
         efSearch_max: 128
-    diskann:
-      metric: "IP"
-      build: {}
+        efSearch_start: 16
+    ivf:
+      build:
+        nlist_from_rule: true
+      metric: IP
       search:
-        search_list_start: 10
-        search_list_max: 100
-
+        nprobe_max: 64
+        nprobe_start: 8
   qdrant:
     hnsw:
-      metric: "Cosine"
       build:
-        m: 16
         ef_construct: 200
-      search:
-        ef_search_start: 64
-        ef_search_max: 256
+        m: 16
+      metric: Cosine
       on_disk: true
-
+      search:
+        ef_search_max: 256
+        ef_search_start: 64
   weaviate:
     hnsw:
-      metric: "cosine"
       build:
-        maxConnections: 16
         efConstruction: 200
+        maxConnections: 16
+      metric: cosine
       search:
-        ef_start: 64
         ef_max: 256
+        ef_start: 64
+pdf_dir: ''
+repeats: 5
+run_seconds: 10
+seed: 42
+sensitivity_study: true
+target_recall_at_k: 0.9
+topk: 10

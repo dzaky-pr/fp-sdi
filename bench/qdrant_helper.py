@@ -31,7 +31,7 @@ def search(client, name, queries, topk, ef_search=64):
     for q in queries:
         hits = client.search(
             name, query_vector=q.tolist(), limit=int(topk),
-            params=qm.SearchParams(hnsw_ef=int(ef_search))
+            search_params=qm.SearchParams(hnsw_ef=int(ef_search))
         )
         res.append([int(h.id) for h in hits])
     return np.array(res, dtype=int)

@@ -1,6 +1,10 @@
 # bench/pdf_embedder.py
 import os, numpy as np, PyPDF2, random
-from sentence_transformers import SentenceTransformer
+try:
+    from sentence_transformers import SentenceTransformer
+    HAS_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    HAS_SENTENCE_TRANSFORMERS = False
 import cohere
 
 def extract_text_from_pdf(pdf_path: str) -> str:
@@ -23,6 +27,8 @@ def chunk_text(text: str, chunk_size: int = 512) -> list:
 
 def embed_with_sentence_transformers(texts: list, model_name: str = "all-MiniLM-L6-v2", dim: int = 384) -> np.ndarray:
     """Embed texts using SentenceTransformers."""
+    if not HAS_SENTENCE_TRANSFORMERS:
+        raise ImportError("sentence_transformers not available")
     model = SentenceTransformer(model_name)
     embeddings = model.encode(texts, convert_to_numpy=True)
     return embeddings.astype(np.float32)
@@ -57,7 +63,14 @@ def generate_pdf_dataset(pdf_dir: str, n_vectors: int, dim: int, n_queries: int,
 
     # Embed vectors
     if embedder == "sentence-transformers":
-        vectors = embed_with_sentence_transformers(selected_texts, dim=dim)
+        if HAS_SENTENCE_TRANSFORMERS:
+            vectors = embed_with_sentence_transformers(selected_texts, dim=dim)
+        else:
+            # Fallback to cohere
+            api_key = os.environ.get("COHERE_API_KEY")
+            if not api_key:
+                raise ValueError("COHERE_API_KEY environment variable required for fallback")
+            vectors = embed_with_cohere(selected_texts, api_key, dim=dim)
     elif embedder == "cohere":
         api_key = os.environ.get("COHERE_API_KEY")
         if not api_key:
@@ -73,7 +86,14 @@ def generate_pdf_dataset(pdf_dir: str, n_vectors: int, dim: int, n_queries: int,
         query_texts = query_texts[:n_queries]
 
     if embedder == "sentence-transformers":
-        queries = embed_with_sentence_transformers(query_texts, dim=dim)
+        if HAS_SENTENCE_TRANSFORMERS:
+            queries = embed_with_sentence_transformers(query_texts, dim=dim)
+        else:
+            # Fallback to cohere
+            api_key = os.environ.get("COHERE_API_KEY")
+            if not api_key:
+                raise ValueError("COHERE_API_KEY environment variable required for fallback")
+            queries = embed_with_cohere(query_texts, api_key, dim=dim)
     else:
         queries = embed_with_cohere(query_texts, api_key, dim=dim)
 

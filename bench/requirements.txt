@@ -14,8 +14,9 @@ weaviate-client==3.25.3
 
 # PDF processing and embedding
 PyPDF2>=3.0
-sentence-transformers>=2.2
+# sentence-transformers>=2.2  # Commented out due to torch conflict
 cohere>=4.0
+rank-bm25>=0.2
 
 # Analysis
 matplotlib>=3.5
