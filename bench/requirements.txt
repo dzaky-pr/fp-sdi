@@ -1,3 +1,4 @@
+# bench/requirements.txt
 numpy>=1.26
 scipy>=1.11
 pandas>=2.2
@@ -10,3 +11,12 @@ PyYAML>=6.0.1
 pymilvus==2.5.2
 qdrant-client==1.9.1
 weaviate-client==3.25.3
+
+# PDF processing and embedding
+PyPDF2>=3.0
+sentence-transformers>=2.2
+cohere>=4.0
+
+# Analysis
+matplotlib>=3.5
+pandas>=2.0

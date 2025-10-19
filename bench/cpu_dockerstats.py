@@ -1,3 +1,4 @@
+# bench/cpu_dockerstats.py
 import docker, time
 
 def sample_container_cpu(container_name: str, duration_s: int) -> float:
@@ -18,6 +19,6 @@ def sample_container_cpu(container_name: str, duration_s: int) -> float:
         perc = (cpu_delta / sys_delta) * len(s["cpu_stats"]["cpu_usage"].get("percpu_usage", [])) * 100.0
         total += perc; n += 1
         if time.time()-start >= duration_s: break
-    try: next(stats)  # stop generator
+    try: next(stats)
     except: pass
     return (total/n) if n else 0.0

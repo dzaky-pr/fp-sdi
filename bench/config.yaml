@@ -1,7 +1,10 @@
+# bench/config.yaml
 seed: 42
+pdf_dir: "" # Disable PDF embedding, use synthetic
+embedder: "sentence-transformers" # or "cohere"
 datasets:
   - name: cohere-mini-200k-d768
-    n_vectors: 200000
+    n_vectors: 50000 # Reduced for laptop
     dim: 768
     n_queries: 1000
   - name: openai-mini-50k-d1536
@@ -9,18 +12,21 @@ datasets:
     dim: 1536
     n_queries: 1000
 
-concurrency_grid: [1, 2, 4, 8, 16, 32] # aman untuk 4-core laptop
+concurrency_grid: [1, 2, 4, 8, 16, 32]
 run_seconds: 30
 repeats: 5
 target_recall_at_k: 0.9
 topk: 10
+enable_payload_filter: true # Enable payload/metadata and filter experiments
+enable_hybrid_search: true # Enable hybrid search for Weaviate
+sensitivity_study: true # Enable parameter sensitivity study
 
 indexes:
   milvus:
     ivf:
-      metric: "IP" # atau "COSINE"/"L2" sesuai pipeline
+      metric: "IP"
       build:
-        nlist_from_rule: true # 4*sqrt(n)
+        nlist_from_rule: true
       search:
         nprobe_start: 8
         nprobe_max: 64
@@ -41,14 +47,14 @@ indexes:
 
   qdrant:
     hnsw:
-      metric: "Cosine" # Qdrant default cocok untuk cosine
+      metric: "Cosine"
       build:
         m: 16
         ef_construct: 200
       search:
         ef_search_start: 64
         ef_search_max: 256
-      on_disk: true # hemat RAM (memmap)
+      on_disk: true
 
   weaviate:
     hnsw:

@@ -1,42 +1,38 @@
+# docker-compose.yml
 x-common-env: &common_env
   TZ: Asia/Jakarta
 
+# Gunakan NVME_ROOT untuk mount NVMe; default ke ./nvme jika tidak di-set.
+# export NVME_ROOT=/Volumes/NVMe/vdb   (contoh di macOS)
 services:
-  # Milvus Standalone (resmi)
   milvus:
     image: milvusdb/milvus:v2.5.11
     container_name: milvus
-    ports:
-      - "19530:19530"
-      - "9091:9091"
+    ports: ["19530:19530", "9091:9091"]
     environment:
       COMMON_RUN_MODE: standalone
       ETCD_USE_EMBED: "true"
       MINIO_USE_EMBED: "true"
       MQ_TYPE: rocksmq
       COMMON_ENABLE_JEMALLOC: "false"
-    # ⬇️ Pastikan ADA command ini (agar CMD tidak kosong)
     command: ["milvus", "run", "standalone"]
     volumes:
-      - milvus_data:/var/lib/milvus
+      - ${NVME_ROOT:-./nvme}/milvus:/var/lib/milvus
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 5s
       timeout: 3s
       retries: 30
 
-  # Qdrant (resmi)
   qdrant:
     image: qdrant/qdrant:v1.14.1
     container_name: qdrant
     profiles: ["qdrant"]
-    environment:
-      <<: *common_env
+    environment: { <<: *common_env }
     ports: ["6333:6333", "6334:6334"]
     volumes:
-      - qdrant_data:/qdrant/storage
+      - ${NVME_ROOT:-./nvme}/qdrant:/qdrant/storage
 
-  # Weaviate (resmi)
   weaviate:
     image: semitechnologies/weaviate:1.31.0
     container_name: weaviate
@@ -47,12 +43,11 @@ services:
       PERSISTENCE_DATA_PATH: /var/lib/weaviate
       CLUSTER_HOSTNAME: "node1"
       QUERY_DEFAULTS_LIMIT: "10"
-      ENABLE_MODULES: "" # tanp a modul agar ringan
+      ENABLE_MODULES: ""
     ports: ["8080:8080"]
     volumes:
-      - weaviate_data:/var/lib/weaviate
+      - ${NVME_ROOT:-./nvme}/weaviate:/var/lib/weaviate
 
-  # Benchmark runner (Python 3.13)
   bench:
     build: ./bench
     container_name: bench
@@ -68,7 +63,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     command: ["sleep", "infinity"]
 
-  # (Opsional) fio baseline
   fio:
     image: alpine:3.20
     container_name: fio
@@ -76,9 +70,6 @@ services:
     entrypoint:
       ["/bin/sh", "-lc", "apk add --no-cache fio && tail -f /dev/null"]
     volumes:
-      - milvus_data:/target # kamu bisa tes juga weaviate_data/qdrant_data
+      - ${NVME_ROOT:-./nvme}/milvus:/target
 
-volumes:
-  milvus_data:
-  qdrant_data:
-  weaviate_data:
+volumes: {}
