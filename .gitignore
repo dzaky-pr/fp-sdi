@@ -62,6 +62,3 @@ plots/
 # Docker & NVMe
 nvme/
 
-# Keep important PDFs
-*.pdf
-!paper_rujukan.pdf

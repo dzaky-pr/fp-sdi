@@ -32,8 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 from utils import brute_force_topk, recall_at_k, percentiles, flush_page_cache
 from datasets import make_or_load_dataset
-from cpu_dockerstats import sample_container_cpu
-from io_monitor import IOMonitor, run_fio_baseline
+from monitoring import sample_container_cpu, IOMonitor, run_fio_baseline
 
 CONF = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "config.yaml"), "r"))
 DATA_ROOT = CONF.get("data_root", "/datasets")
@@ -45,12 +44,7 @@ SENSITIVITY_STUDY = CONF.get("sensitivity_study", False)
 
 def log(*a): print(*a, flush=True)
 
-def _import_helper(fname: str, asname: str):
-    p = pathlib.Path(__file__).parent / fname
-    spec = importlib.util.spec_from_file_location(asname, p.as_posix())
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+from clients import QdrantClientHelper, WeaviateClient
 
 def run_concurrency_grid(container_name, run_seconds, queries, search_callable):
     """Jalankan grid concurrency:
@@ -154,7 +148,7 @@ def run_qdrant(ds, vec_override=None, qry_override=None):
     estimated_time_min = 2 + (total_runs * CONF["run_seconds"] / 60)
     log(f"[qdrant] Estimated total time: ~{estimated_time_min:.0f} minutes ({total_runs} runs)")
     
-    qh = _import_helper("qdrant_helper.py", "qh")
+    qh = QdrantClientHelper()
     name = "bench"
     n, d, nq = ds["n_vectors"], ds["dim"], ds["n_queries"]
     if vec_override is not None and qry_override is not None:
@@ -190,7 +184,7 @@ def run_qdrant(ds, vec_override=None, qry_override=None):
 
 # ---------------- Weaviate ----------------
 def run_weaviate(ds, vec_override=None, qry_override=None):
-    wh = _import_helper("weaviate_client.py", "wh")
+    wh = WeaviateClient()
     classname = "BenchItem"
     n, d, nq = ds["n_vectors"], ds["dim"], ds["n_queries"]
     if vec_override is not None and qry_override is not None:
@@ -233,7 +227,7 @@ def run_sensitivity_study(db, index_kind, ds):
     results = []
     
     if db == "qdrant":
-        qh = _import_helper("qdrant_helper.py", "qh")
+        qh = QdrantClientHelper()
         name = "bench"
         n, d, nq = ds["n_vectors"], ds["dim"], ds["n_queries"]
         vectors, queries, metadata, vectors_sparse, queries_sparse = make_or_load_dataset(DATA_ROOT, ds["name"], n, d, nq, seed=CONF["seed"], pdf_dir=PDF_DIR, embedder=EMBEDDER, enable_payload=ENABLE_PAYLOAD, enable_hybrid=ENABLE_HYBRID)
@@ -258,7 +252,7 @@ def run_sensitivity_study(db, index_kind, ds):
                 results.extend(res)
     
     elif db == "weaviate":
-        wh = _import_helper("weaviate_client.py", "wh")
+        wh = WeaviateClient()
         classname = "BenchItem"
         n, d, nq = ds["n_vectors"], ds["dim"], ds["n_queries"]
         vectors, queries, metadata, vectors_sparse, queries_sparse = make_or_load_dataset(DATA_ROOT, ds["name"], n, d, nq, seed=CONF["seed"], pdf_dir=PDF_DIR, embedder=EMBEDDER, enable_payload=ENABLE_PAYLOAD, enable_hybrid=ENABLE_HYBRID)

@@ -38,6 +38,42 @@
 
 ---
 
+## File Structure
+
+Proyek ini telah dioptimalkan menjadi 6 file Python utama untuk kemudahan maintenance, tanpa merusak logic atau flow benchmark. Berikut penjelasan fungsi masing-masing file:
+
+### `bench.py`
+
+- **Fungsi Utama**: Script entry point untuk menjalankan benchmark.
+- **Detail**: Mengatur concurrency grid, tuning parameter HNSW (ef search), dan orchestrasi seluruh proses benchmark. Mendukung mode sensitivity study dan baseline I/O test. Menggunakan ThreadPoolExecutor untuk simulasi concurrency.
+
+### `clients.py`
+
+- **Fungsi Utama**: Wrapper class untuk client database vector (Qdrant dan Weaviate).
+- **Detail**: Berisi class `QdrantClientHelper` dan `WeaviateClient` dengan method standar: `connect()`, `drop_recreate()`, `insert()`, `search()`. Memungkinkan ekstensi mudah untuk database baru tanpa mengubah logic utama.
+
+### `datasets.py`
+
+- **Fungsi Utama**: Pembuatan dan pemuatan dataset untuk benchmark.
+- **Detail**: Menghasilkan embedding dari PDF menggunakan SentenceTransformers (gratis dan open source), atau data synthetic. Mendukung hybrid search dengan sparse vectors (BM25). Cache dataset ke file .npy untuk efisiensi.
+
+### `monitoring.py`
+
+- **Fungsi Utama**: Monitoring performa sistem selama benchmark.
+- **Detail**: Monitor CPU usage dari Docker container, I/O traces (bpftrace/iostat fallback), dan page cache flush. Termasuk FIO baseline test untuk disk performance.
+
+### `utils.py`
+
+- **Fungsi Utama**: Utility functions umum.
+- **Detail**: Hitung percentile (P50, P95, P99), brute-force top-k search untuk ground truth, recall calculation, dan flush page cache. Digunakan di seluruh proyek untuk metrik dan helper.
+
+### `analyze_results.py`
+
+- **Fungsi Utama**: Analisis dan visualisasi hasil benchmark.
+- **Detail**: Membaca JSON hasil, membuat plot QPS vs concurrency, P99 latency, CPU usage. Menghasilkan summary stats dan bottleneck analysis (CPU-bound vs I/O-bound).
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
