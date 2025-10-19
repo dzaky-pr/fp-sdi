@@ -1,42 +1,36 @@
 # docker-compose.yml
+# Benchmark Vector Databases: Qdrant vs Weaviate
+# Mengikuti metodologi paper rujukan dengan fokus pada perbandingan HNSW-based systems
+# Milvus dikecualikan karena resource-intensive dan sering unstable di macOS/laptop
+
 x-common-env: &common_env
   TZ: Asia/Jakarta
 
 # Gunakan NVME_ROOT untuk NVMe internal macOS; default ke ./nvme jika tidak set.
 # export NVME_ROOT=/Users/dzakyrifai/nvme-vdb (contoh setup aman untuk macOS internal SSD)
 services:
-  milvus:
-    image: milvusdb/milvus:v2.5.11
-    container_name: milvus
-    ports: ["19530:19530", "9091:9091"]
-    environment:
-      COMMON_RUN_MODE: standalone
-      ETCD_USE_EMBED: "true"
-      MINIO_USE_EMBED: "true"
-      MQ_TYPE: rocksmq
-      COMMON_ENABLE_JEMALLOC: "false"
-    command: ["milvus", "run", "standalone"]
-    volumes:
-      - ${NVME_ROOT:-./nvme}/milvus:/var/lib/milvus
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-
+  # ============================================================================
+  # QDRANT - Vector Database dengan HNSW Index
+  # ============================================================================
   qdrant:
     image: qdrant/qdrant:v1.14.1
     container_name: qdrant
-    profiles: ["qdrant"]
     environment: { <<: *common_env }
     ports: ["6333:6333", "6334:6334"]
     volumes:
       - ${NVME_ROOT:-./nvme}/qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 
+  # ============================================================================
+  # WEAVIATE - Vector Database dengan HNSW Index
+  # ============================================================================
   weaviate:
     image: semitechnologies/weaviate:1.31.0
     container_name: weaviate
-    profiles: ["weaviate"]
     environment:
       <<: *common_env
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
@@ -47,11 +41,18 @@ services:
     ports: ["8080:8080"]
     volumes:
       - ${NVME_ROOT:-./nvme}/weaviate:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 
+  # ============================================================================
+  # BENCH - Container untuk menjalankan benchmark
+  # ============================================================================
   bench:
     build: ./bench
     container_name: bench
-    profiles: ["bench"]
     stdin_open: true
     tty: true
     environment:
@@ -62,7 +63,15 @@ services:
       - ./datasets:/datasets
       - /var/run/docker.sock:/var/run/docker.sock
     command: ["sleep", "infinity"]
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      weaviate:
+        condition: service_healthy
 
+  # ============================================================================
+  # FIO - Container untuk I/O baseline testing (opsional)
+  # ============================================================================
   fio:
     image: alpine:3.20
     container_name: fio

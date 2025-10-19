@@ -6,9 +6,9 @@ psutil>=5.9
 docker>=7.0
 requests>=2.32
 PyYAML>=6.0.1
+tqdm>=4.66  # For progress bars
 
-# clients
-pymilvus==2.5.2
+# Vector database clients (Qdrant vs Weaviate only)
 qdrant-client==1.9.1
 weaviate-client==3.25.3
 

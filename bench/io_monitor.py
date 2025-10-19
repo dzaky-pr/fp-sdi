@@ -107,14 +107,14 @@ class IOMonitor:
 def run_fio_baseline(target_dir: str = "/datasets", duration: int = 30) -> Dict:
     baseline_results = {}
     tests = [
-        {'name': 'random_4k_read', 'params': f'--name=rand4k --rw=randread --bs=4k --numjobs=1 --runtime={duration} --time_based --size=256M'},
-        {'name': 'sequential_read', 'params': f'--name=seqread --rw=read --bs=1M --numjobs=1 --runtime={duration} --time_based --direct=1 --size=256M'},
-        {'name': 'random_4k_write','params': f'--name=rand4kw --rw=randwrite --bs=4k --numjobs=1 --runtime={duration} --time_based --size=256M'},
+        {'name': 'random_4k_read', 'params': f'--name=rand4k --rw=randread --bs=4k --numjobs=1 --runtime=30 --time_based --size=128M'},  # Kurangi dari 256M ke 128M
+        {'name': 'sequential_read', 'params': f'--name=seqread --rw=read --bs=1M --numjobs=1 --runtime=30 --time_based --direct=1 --size=256M'},
+        {'name': 'random_4k_write','params': f'--name=rand4kw --rw=randwrite --bs=4k --numjobs=1 --runtime=30 --time_based --size=256M'},
     ]
     os.makedirs(target_dir, exist_ok=True)
     test_file = os.path.join(target_dir, "fio_test.tmp")
     for test in tests:
-        cmd = f"fio {test['params']} --filename={test_file} --size=1G --output-format=json"
+        cmd = f"fio {test['params']} --filename={test_file} --output-format=json"  # Hapus --size=1G
         try:
             result = subprocess.run(cmd.split(), capture_output=True, text=True, timeout=duration + 30, cwd=target_dir)
             if result.returncode == 0:

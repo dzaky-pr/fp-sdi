@@ -1,49 +1,22 @@
-# .gitignore
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-dist/
-.eggs/
+*.pyc
+*.pyo
 *.egg-info
-*.egg
-MANIFEST
-pip-log.txt
-pip-delete-this-directory.txt
-htmlcov/
-.tox/
-.nox/
-.coverage*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-.ipynb_checkpoints
-profile_default/
-.python-version
-Pipfile.lock
-poetry.lock
-.pdm.toml
-__pypackages__/
-celerybeat-schedule
-celerybeat.pid
-instance/
-.webassets-cache
-.scrapy
-docs/_build/
-.pybuilder/
-target/
+venv/
+.venv/
+
+# Results & temp files
+results_*.json
+*.tmp
+*.log
+
+# macOS
 .DS_Store
-.DS_Store?
 ._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+
+# IDE
 .idea/
 .vscode/
 *.swp
@@ -74,37 +47,21 @@ datasets/*/
 tmp/
 temp/
 *.tmp
-*.temp
-logs/
-*.log.*
-*.prof
-*.pprof
-perf.data*
-callgrind.out.*
-*.trace
-io_trace_*
-bpftrace_*
-fio_*
-*.fio
-*.iostat
-*.sar
-*.vmstat
+# Backup files
 *.bak
-*.backup
+*.backup*
 *.orig
-*.zip
-*.tar.gz
-*.7z
+
+# Test/benchmark outputs
+fio_*
+io_trace_*
 plots/
-figures/
 *.png
-*.jpg
-*.jpeg
 *.svg
+
+# Docker & NVMe
+nvme/
+
+# Keep important PDFs
 *.pdf
 !paper_rujukan.pdf
-config.local.*
-.env
-.env.local
-test_results/
-validation_results/

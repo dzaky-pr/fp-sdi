@@ -1,42 +1,23 @@
 concurrency_grid:
-- 1
-- 2
-data_root: ./datasets
+  - 1
+  - 2
+data_root: ../datasets
 datasets:
-- dim: 768
-  n_queries: 1000
-  n_vectors: 50000
-  name: cohere-mini-200k-d768
-- dim: 1536
-  n_queries: 1000
-  n_vectors: 50000
-  name: openai-mini-50k-d1536
+  - dim: 768
+    n_queries: 1000
+    n_vectors: 25000 # Reduced from 50000 for lower RAM usage
+    name: cohere-mini-200k-d768
+  - dim: 1536
+    n_queries: 1000
+    n_vectors: 50000
+    name: openai-mini-50k-d1536
 embedder: sentence-transformers
 enable_hybrid_search: true
 enable_payload_filter: true
+
+# Index configurations for Qdrant vs Weaviate (HNSW only)
+# Milvus excluded due to resource constraints and API instability
 indexes:
-  milvus:
-    diskann:
-      build: {}
-      metric: IP
-      search:
-        search_list_max: 100
-        search_list_start: 10
-    hnsw:
-      build:
-        M: 16
-        efConstruction: 200
-      metric: IP
-      search:
-        efSearch_max: 128
-        efSearch_start: 16
-    ivf:
-      build:
-        nlist_from_rule: true
-      metric: IP
-      search:
-        nprobe_max: 64
-        nprobe_start: 8
   qdrant:
     hnsw:
       build:
@@ -56,7 +37,7 @@ indexes:
       search:
         ef_max: 256
         ef_start: 64
-pdf_dir: ''
+pdf_dir: ""
 repeats: 5
 run_seconds: 10
 seed: 42
