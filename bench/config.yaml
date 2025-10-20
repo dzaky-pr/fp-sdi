@@ -3,14 +3,18 @@ concurrency_grid:
   - 2
 data_root: ../datasets
 datasets:
+  - dim: 384
+    n_queries: 1000
+    n_vectors: 10000
+    name: msmarco-mini-10k-d384
   - dim: 768
     n_queries: 1000
-    n_vectors: 25000 # Reduced from 50000 for lower RAM usage
-    name: cohere-mini-200k-d768
+    n_vectors: 50000
+    name: cohere-mini-50k-d768
   - dim: 1536
     n_queries: 1000
-    n_vectors: 50000
-    name: openai-mini-50k-d1536
+    n_vectors: 10000
+    name: openai-ada-10k-d1536
 embedder: sentence-transformers
 enable_hybrid_search: true
 enable_payload_filter: true
@@ -39,7 +43,7 @@ indexes:
         ef_start: 64
 pdf_dir: ""
 repeats: 5
-run_seconds: 10
+run_seconds: 30
 seed: 42
 sensitivity_study: true
 target_recall_at_k: 0.9

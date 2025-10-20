@@ -27,15 +27,3 @@ def recall_at_k(gt_idx: np.ndarray, res_idx: np.ndarray) -> float:
     for i in range(gt_idx.shape[0]):
         hit += len(set(gt_idx[i]).intersection(set(res_idx[i])))
     return hit / (gt_idx.shape[0]*gt_idx.shape[1])
-
-def flush_page_cache():
-    cmds = [
-        "sync",
-        "echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || true",
-        "echo 2 > /proc/sys/vm/drop_caches 2>/dev/null || true",
-        "echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true",
-    ]
-    for cmd in cmds:
-        try: subprocess.run(cmd, shell=True, timeout=10); time.sleep(0.5)
-        except: pass
-    print("Page cache flush attempted")

@@ -13,14 +13,29 @@
 - API kompleks dan sering berubah
 - **Fokus apple-to-apple**: Qdrant & Weaviate sama-sama pakai HNSW
 
+### Objective Utama Perbandingan
+
+Nah, kenapa sih kita bandingin Qdrant sama Weaviate? Karena kita pengen bantu orang-orang kayak developer, peneliti, atau bahkan bisnis kecil buat pilih database vektor yang pas buat cari dokumen PDF secara cerdas. Bayangin aja, cari info dari PDF pake AI, bukan cuma keyword biasa.
+
+**Tujuan Akhirnya** (terinspirasi dari paper rujukan yang skala besar):
+
+- **Cari tahu kekuatan masing-masing**: Qdrant tuh lebih cepat dan hemat resource di laptop biasa, cocok buat app yang butuh respon kilat. Weaviate lebih kaya fitur, kayak bisa gabung pencarian teks sama vektor, jadi lebih fleksibel buat app kompleks.
+- **Bikin riset besar jadi praktis**: Paper-paper sering pakai server gede, tapi kita buktin di laptop aja bisa, biar hemat biaya buat kuliah atau startup kecil.
+- **Dorong kreativitas AI**: Hasil benchmark ini bisa jadi inspirasi buat bikin app keren kayak chatbot yang bisa jawab dari PDF, atau AI yang cari info otomatis – tanpa perlu beli hardware mahal.
+- **Bantu tugas kuliah atau riset**: Data ini bisa langsung dipake buat skripsi, dengan perbandingan yang adil dan bisa diulang orang lain.
+
+Pokoknya, proyek ini mau bikin pencarian cerdas pake AI lebih gampang diakses sama dipilih, buat siapa aja yang mau inovasi di dunia digital.
+
+---
+
 ### Validitas Penelitian
 
-| Aspek          | Qdrant              | Weaviate               | Status        |
-| -------------- | ------------------- | ---------------------- | ------------- |
-| **Index**      | HNSW                | HNSW                   | ✅ Sama       |
-| **Deployment** | Docker              | Docker                 | ✅ Sama       |
-| **Storage**    | NVMe                | NVMe                   | ✅ Sama       |
-| **Tuning**     | ef, M, ef_construct | ef, maxConnections, ef | ✅ Comparable |
+| Aspek          | Qdrant                           | Weaviate                         | Status  |
+| -------------- | -------------------------------- | -------------------------------- | ------- |
+| **Index**      | HNSW                             | HNSW                             | ✅ Sama |
+| **Deployment** | Docker                           | Docker                           | ✅ Sama |
+| **Storage**    | NVMe                             | NVMe                             | ✅ Sama |
+| **Execution**  | Sequential (satu database aktif) | Sequential (satu database aktif) | ✅ Sama |
 
 **Sesuai Paper Rujukan**:
 
@@ -29,12 +44,33 @@
 - ✅ Standardized metrics (QPS, P99 latency, recall@10)
 - ✅ Fair parameter tuning hingga recall ≥ 0.9
 - ✅ Multiple runs (5× repeats) untuk reliability
+- ✅ **Sequential execution** untuk fairness comparison
 
 **Sesuai Batasan Studi (Bab 1-3)**:
 
 - ✅ Docker-based only (LanceDB dikecualikan)
 - ✅ Laptop/workstation environment
 - ✅ HNSW focus (Milvus IVF/DiskANN tidak diperlukan)
+
+---
+
+## 🔍 How Search/Query Works (Big Picture)
+
+Proyek ini **bukan aplikasi pencarian end-user**, tapi **benchmark otomatis** untuk ukur performa. Search di sini adalah **semantic search berbasis vektor** (bukan teks keyword), menggunakan embeddings untuk temukan kemiripan.
+
+### Contoh Sederhana:
+
+- **Query**: Bukan teks seperti "cari mobil", tapi **vektor numerik** (array float, dimensi 768). Contoh: `[0.123, -0.456, 0.789, ..., 0.001]` (dari embed teks atau random).
+- **Proses**: Kirim vektor query ke database (Qdrant/Weaviate), dapatkan top-10 vektor paling mirip (berdasarkan cosine similarity). Hasil: ID dokumen, bukan teks.
+- **Tujuan**: Ukur QPS (query per detik), latency, recall – bukan tampilkan hasil ke user.
+- **Dataset**: Dari PDF (embed teks jadi vektor) atau synthetic (random vektor).
+
+Ini membantu bayang big picture: Benchmark membandingkan cepat/lambat database dalam handle query vektor, untuk riset semantic search pada PDF.
+
+### Apa Itu HNSW? Kenapa Tuning Comparable?
+
+- **HNSW (Hierarchical Navigable Small World)**: Algoritma untuk cari "tetangga terdekat" dalam data vektor high-dimensional (seperti embeddings 768D). Lebih cepat dari brute force, tapi approximate (kurang akurat untuk trade-off speed).
+- **Tuning Comparable**: Qdrant & Weaviate sama-sama pakai HNSW, jadi parameter seperti `ef` (exploration factor – seberapa dalam cari untuk akurasi) bisa dibandingkan langsung. Contoh: ef=128 di keduanya berarti eksplorasi sama, hasil fair.
 
 ---
 
@@ -55,7 +91,7 @@ Proyek ini telah dioptimalkan menjadi 6 file Python utama untuk kemudahan mainte
 ### `datasets.py`
 
 - **Fungsi Utama**: Pembuatan dan pemuatan dataset untuk benchmark.
-- **Detail**: Menghasilkan embedding dari PDF menggunakan SentenceTransformers (gratis dan open source), atau data synthetic. Mendukung hybrid search dengan sparse vectors (BM25). Cache dataset ke file .npy untuk efisiensi.
+- **Detail**: Menghasilkan embedding dari PDF menggunakan SentenceTransformers (gratis dan open source), atau data synthetic. Mendukung hybrid search dengan sparse vectors (BM25). Cache dataset ke file .npy untuk efisiensi. Dataset tersedia: `msmarco-mini-10k-d384`, `cohere-mini-50k-d768`, `openai-ada-10k-d1536`.
 
 ### `monitoring.py`
 
@@ -94,15 +130,18 @@ df -h .  # Minimal 10GB free
 git clone https://github.com/dzaky-pr/fp-sdi.git
 cd fp-sdi
 
-# 2. Setup NVMe storage path
-export NVME_ROOT="$HOME/nvme-vdb"
+# 2. Setup NVMe storage path (KRITIS - HARUS sesuai!)
+export NVME_ROOT="/Users/dzakyrifai/nvme-vdb"
 mkdir -p "$NVME_ROOT"
+
+# Verify path (HARUS output: /Users/dzakyrifai/nvme-vdb)
+echo "$NVME_ROOT"
 
 # 3. Build containers
 make build
 
-# 4. Start services
-make up
+# 4. Start services (gunakan export NVME_ROOT jika belum permanent)
+export NVME_ROOT="/Users/dzakyrifai/nvme-vdb" && make up
 
 # 5. Verify setup
 make test-all
@@ -110,21 +149,60 @@ make test-all
 
 ### Run Benchmarks
 
+**⚠️ IMPORTANT**: Jalankan benchmark **SATU PER SATU** untuk fairness comparison. Jangan jalankan kedua database bersamaan karena akan berebut resource.
+
 ```bash
 # Enter benchmark container
 make bench-shell
 
-# Run Qdrant
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-200k-d768 > /app/results_qdrant.json
+# ===========================================
+# RUN QDRANT BENCHMARK (Stop Weaviate first)
+# ===========================================
+# From host terminal (bukan di bench-shell):
+docker compose stop weaviate
 
-# Run Weaviate
-python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-200k-d768 > /app/results_weaviate.json
+# Then in bench-shell:
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 > /app/results_qdrant.json
 
-# Exit
+# ===========================================
+# RUN WEAVIATE BENCHMARK (Stop Qdrant first)
+# ===========================================
+# From host terminal (bukan di bench-shell):
+docker compose stop qdrant && docker compose start weaviate
+
+# Then in bench-shell:
+python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 > /app/results_weaviate.json
+
+# Optional: Run on all datasets for comprehensive comparison
+# ===========================================
+# BASELINE (Low-dim) - Qdrant
+# ===========================================
+# From host: docker compose stop weaviate
+python3 bench.py --db qdrant --index hnsw --dataset msmarco-mini-10k-d384 > /app/results_qdrant_baseline.json
+
+# ===========================================
+# BASELINE (Low-dim) - Weaviate
+# ===========================================
+# From host: docker compose stop qdrant && docker compose start weaviate
+python3 bench.py --db weaviate --index hnsw --dataset msmarco-mini-10k-d384 > /app/results_weaviate_baseline.json
+
+# ===========================================
+# STRESS (High-dim) - Qdrant
+# ===========================================
+# From host: docker compose stop weaviate
+python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536 > /app/results_qdrant_stress.json
+
+# ===========================================
+# STRESS (High-dim) - Weaviate
+# ===========================================
+# From host: docker compose stop qdrant && docker compose start weaviate
+python3 bench.py --db weaviate --index hnsw --dataset openai-ada-10k-d1536 > /app/results_weaviate_stress.json
+
+# Exit bench container
 exit
 
-# Analyze results
-python3 bench/analyze_results.py results_qdrant.json results_weaviate.json
+# Analyze results (compare all datasets)
+python3 bench/analyze_results.py results_qdrant_baseline.json results_weaviate_baseline.json results_qdrant.json results_weaviate.json results_qdrant_stress.json results_weaviate_stress.json
 ```
 
 ---
@@ -148,26 +226,36 @@ python3 bench/analyze_results.py results_qdrant.json results_weaviate.json
 
 ### 2. NVMe Storage Setup
 
-⚠️ **PENTING**: Gunakan path yang AMAN!
+⚠️ **KRITIS**: Path HARUS `/Users/dzakyrifai/nvme-vdb` (sesuai hardware MacBook Pro M1)
 
 ```bash
-# AMAN - di user directory
-export NVME_ROOT="$HOME/nvme-vdb"
+# Setup NVMe internal path (PAKAI INI - JANGAN DIGANTI!)
+export NVME_ROOT="/Users/dzakyrifai/nvme-vdb"
 mkdir -p "$NVME_ROOT"
 
-# Verify
-echo "$NVME_ROOT"  # Should show: /Users/username/nvme-vdb
-ls -la "$NVME_ROOT"
+# VERIFICATION KRITIS (jalankan semua!)
+echo "$NVME_ROOT"                    # HARUS: /Users/dzakyrifai/nvme-vdb
+ls -la "$NVME_ROOT"                  # Check directory exists
+df -h "$NVME_ROOT"                   # Check NVMe mount point
+du -sh "$NVME_ROOT"                  # Check current usage
 
-# Make permanent (optional)
-echo 'export NVME_ROOT="$HOME/nvme-vdb"' >> ~/.zshrc
+# Make permanent (recommended)
+echo 'export NVME_ROOT="/Users/dzakyrifai/nvme-vdb"' >> ~/.zshrc
+source ~/.zshrc
 ```
+
+**Konfirmasi Volume Mapping:**
+
+- **Qdrant**: `${NVME_ROOT}/qdrant:/qdrant/storage`
+- **Weaviate**: `${NVME_ROOT}/weaviate:/var/lib/weaviate`
+- **FIO**: `${NVME_ROOT}/fio:/target`
 
 ❌ **JANGAN gunakan**:
 
 - `/System/*` - System files
 - `/usr/*` - System binaries
 - `/` - Root filesystem
+- `~/nvme-vdb` - Tidak akan resolve dengan benar di Docker
 
 ### 3. Build & Start Services
 
@@ -175,8 +263,8 @@ echo 'export NVME_ROOT="$HOME/nvme-vdb"' >> ~/.zshrc
 # Build benchmark container
 make build
 
-# Start Qdrant + Weaviate
-make up
+# Start Qdrant + Weaviate (PAKAI export NVME_ROOT!)
+export NVME_ROOT="/Users/dzakyrifai/nvme-vdb" && make up
 
 # Check services
 docker compose ps
@@ -188,20 +276,55 @@ make test-all
 
 ### 4. Run Benchmarks
 
+**⚠️ KRITIS**: Benchmark dijalankan **SATU PER SATU** untuk fairness. Jangan jalankan paralel karena berebut resource!
+
+**Workflow Sequential**:
+
+1. Start semua services dengan `make up`
+2. Masuk bench container dengan `make bench-shell`
+3. Stop database yang tidak digunakan
+4. Jalankan benchmark untuk database yang aktif
+5. Switch database dan ulangi
+
 ```bash
 # Enter container
 make bench-shell
 
-# Inside container - run benchmarks
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-200k-d768 > /app/results_qdrant.json
-python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-200k-d768 > /app/results_weaviate.json
+# ===========================================
+# QDRANT BENCHMARKS
+# ===========================================
+# Stop Weaviate (dari terminal host, bukan bench-shell):
+docker compose stop weaviate
+
+# Jalankan benchmarks Qdrant (di bench-shell):
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 > /app/results_qdrant.json
+python3 bench.py --db qdrant --index hnsw --dataset msmarco-mini-10k-d384 > /app/results_qdrant_baseline.json
+python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536 > /app/results_qdrant_stress.json
+
+# ===========================================
+# WEAVIATE BENCHMARKS
+# ===========================================
+# Stop Qdrant & start Weaviate (dari terminal host):
+docker compose stop qdrant && docker compose start weaviate
+
+# Jalankan benchmarks Weaviate (di bench-shell):
+python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 > /app/results_weaviate.json
+python3 bench.py --db weaviate --index hnsw --dataset msmarco-mini-10k-d384 > /app/results_weaviate_baseline.json
+python3 bench.py --db weaviate --index hnsw --dataset openai-ada-10k-d1536 > /app/results_weaviate_stress.json
 
 # Optional: Sensitivity study (recall vs QPS trade-off)
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-200k-d768 --sensitivity > /app/results_qdrant_sensitivity.json
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --sensitivity > /app/results_qdrant_sensitivity.json
 
 # Exit
 exit
 ```
+
+**Mengapa Sequential?**
+
+- **Fairness**: Setiap database dapat full resource (CPU, RAM, I/O)
+- **Accuracy**: Tidak ada interference antar database
+- **Reliability**: Benchmark lebih stabil dan reproducible
+- **Resource Efficiency**: Laptop/workstation terbatas resource
 
 ### 5. Analyze Results
 
@@ -217,7 +340,7 @@ python3 bench/analyze_results.py results_qdrant.json results_weaviate.json --plo
 
 ## 📊 Expected Performance
 
-Berdasarkan testing di MacBook Pro M1 (16GB RAM):
+Berdasarkan testing di MacBook Pro M1 (16GB RAM) dengan dataset `cohere-mini-50k-d768` (50k vectors, 768D). **Benchmark dijalankan sequential** (satu database aktif) untuk fairness.
 
 ### Qdrant
 
@@ -251,14 +374,36 @@ CPU: 50-70%, I/O: 60-120 MB/s
 
 ### Dataset
 
+Dataset dipilih berdasarkan kategori untuk coverage komprehensif: baseline (low-dim), main (medium-dim), dan stress (high-dim). Ini memungkinkan pengujian performa dari skala kecil hingga besar, sesuai metodologi paper rujukan.
+
+| Kategori                  | Dataset                 | Tujuan                                       | Dimensi | Vektor | Query |
+| ------------------------- | ----------------------- | -------------------------------------------- | ------- | ------ | ----- |
+| 🧪 **Baseline (Low-dim)** | `msmarco-mini-10k-d384` | Pengujian kecepatan dasar, efisiensi RAM     | 384     | 10k    | 1k    |
+| ⚙️ **Main (Medium-dim)**  | `cohere-mini-50k-d768`  | Pengujian utama, representatif paper rujukan | 768     | 50k    | 1k    |
+| 🧮 **Stress (High-dim)**  | `openai-ada-10k-d1536`  | Sensitivitas terhadap dimensi embedding      | 1536    | 10k    | 1k    |
+
+**Alasan Pemilihan**:
+
+- **msmarco-mini-10k-d384**: Low-dim untuk baseline cepat, hemat RAM di laptop.
+- **cohere-mini-50k-d768**: Medium-dim sebagai main test, mirip dataset paper rujukan.
+- **openai-ada-10k-d1536**: High-dim untuk stress test dimensi, menguji skalabilitas.
+
 Edit `bench/config.yaml`:
 
 ```yaml
 datasets:
-  - name: cohere-mini-200k-d768
-    n_vectors: 25000 # Reduce for faster testing
+  - name: msmarco-mini-10k-d384
+    n_vectors: 10000
+    n_queries: 1000
+    dim: 384
+  - name: cohere-mini-50k-d768
+    n_vectors: 50000
     n_queries: 1000
     dim: 768
+  - name: openai-ada-10k-d1536
+    n_vectors: 10000
+    n_queries: 1000
+    dim: 1536
 ```
 
 ### HNSW Parameters
@@ -309,20 +454,38 @@ make bench-shell # Enter benchmark container
 make test-all    # Test connectivity
 ```
 
+### Database Switching Commands
+
+```bash
+# Switch to Qdrant only (stop Weaviate)
+docker compose stop weaviate
+
+# Switch to Weaviate only (stop Qdrant)
+docker compose stop qdrant && docker compose start weaviate
+
+# Start all services
+docker compose start qdrant weaviate bench
+```
+
 ### Benchmark Options
 
 ```bash
-# Basic benchmark
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-200k-d768
+# Basic benchmark (main dataset)
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768
+
+# Benchmark on different datasets
+python3 bench.py --db qdrant --index hnsw --dataset msmarco-mini-10k-d384    # Baseline (low-dim)
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768     # Main (medium-dim)
+python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536     # Stress (high-dim)
 
 # Sensitivity study
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-200k-d768 --sensitivity
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --sensitivity
 
 # I/O baseline test
 python3 bench.py --baseline
 
 # Custom embeddings
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-200k-d768 --embeddings_npy path/to/custom.npy
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --embeddings_npy path/to/custom.npy
 ```
 
 ---
@@ -343,6 +506,39 @@ docker compose logs qdrant
 docker compose logs weaviate
 ```
 
+### Healthcheck Issues
+
+**Problem**: Container stuck di "waiting" atau "health: starting" meskipun service sudah running.
+
+**Symptoms**:
+
+- `docker compose ps` menunjukkan `health: starting` atau `unhealthy`
+- Service endpoint accessible via curl tapi healthcheck gagal
+- Logs menunjukkan service sudah listening di port yang benar
+
+**Root Cause**:
+
+- Container Qdrant tidak punya `curl`/`wget` terinstall
+- Container Weaviate punya `wget` tapi healthcheck menggunakan `curl`
+
+**Solutions**:
+
+```bash
+# Check if tools available in containers
+docker compose exec qdrant which curl  # Should fail
+docker compose exec weaviate which wget  # Should succeed
+
+# If healthcheck fails, restart services
+make down && make up
+
+# Manual healthcheck test
+curl -s http://localhost:6333/healthz  # Qdrant
+curl -s http://localhost:8080/v1/meta  # Weaviate
+
+# Force recreate containers if needed
+docker compose up --force-recreate -d
+```
+
 ### Low Performance
 
 ```bash
@@ -361,10 +557,25 @@ on_disk: false
 ```bash
 # Test connectivity
 curl http://localhost:6333/healthz    # Qdrant
-curl http://localhost:8080/v1/.well-known/ready  # Weaviate
+curl http://localhost:8080/v1/meta    # Weaviate
 
 # Restart services
 make down && sleep 5 && make up
+```
+
+### Sequential Benchmark Issues
+
+```bash
+# Pastikan hanya satu database yang running
+docker compose ps
+
+# Jika kedua database running, stop salah satu
+docker compose stop weaviate  # Untuk benchmark Qdrant
+# atau
+docker compose stop qdrant && docker compose start weaviate  # Untuk benchmark Weaviate
+
+# Check resource usage
+docker stats
 ```
 
 ### Disk Space Issues
@@ -400,7 +611,7 @@ docker system prune -a  # Remove unused Docker data
   "metadata": {
     "db": "qdrant",
     "index": "hnsw",
-    "dataset": "cohere-mini-200k-d768",
+    "dataset": "cohere-mini-50k-d768",
     "timestamp": "2025-01-19T..."
   }
 }
@@ -449,11 +660,17 @@ Untuk laporan/skripsi:
 
 ## ❓ FAQ
 
+**Q: Container stuck di "waiting" atau healthcheck gagal?**  
+A: Biasanya karena `curl`/`wget` tidak tersedia di container. Restart dengan `make down && make up`. Jika masih gagal, cek logs dengan `docker compose logs qdrant` atau `docker compose logs weaviate`.
+
 **Q: Apakah valid tanpa Milvus?**  
 A: Ya! Fokus pada HNSW comparison (apple-to-apple), metodologi paper tetap diikuti.
 
 **Q: Berapa lama total waktu?**  
-A: ~15-20 menit per database, total ~30-40 menit.
+A: ~8-12 menit per dataset per database. Total untuk semua dataset: ~1-1.5 jam. Sequential untuk fairness!
+
+**Q: Mengapa jalan satu per satu?**  
+A: Untuk fairness comparison! Jika paralel, kedua database berebut resource (CPU/RAM/I/O) sehingga hasil tidak akurat. Laptop/workstation resource terbatas.
 
 **Q: Bisa pakai custom embeddings?**  
 A: Ya, gunakan `--embeddings_npy` dan `--queries_npy`.
@@ -485,4 +702,4 @@ python3 bench.py --help  # Benchmark options
 
 **Happy Benchmarking! 🚀**
 
-_Last updated: January 19, 2025_
+_Last updated: October 20, 2025_

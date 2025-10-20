@@ -30,7 +30,7 @@ import os, time, yaml, threading, json, argparse, pathlib, importlib.util
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
-from utils import brute_force_topk, recall_at_k, percentiles, flush_page_cache
+from utils import brute_force_topk, recall_at_k, percentiles
 from datasets import make_or_load_dataset
 from monitoring import sample_container_cpu, IOMonitor, run_fio_baseline
 
@@ -69,11 +69,31 @@ def run_concurrency_grid(container_name, run_seconds, queries, search_callable):
             try:
                 _ = search_callable(queries[:min(64, len(queries))], time.perf_counter())
                 time.sleep(1)
-            except Exception:
-                pass
+            except Exception as e:
+                log(f"[{container_name}] Warning: Warm-up failed: {e}, continuing anyway...")
 
+            # Start monitoring threads
             io_monitor = IOMonitor()
             io_thread = io_monitor.start_monitoring(run_seconds + 5)
+            
+            # Start CPU monitoring in separate thread
+            cpu_values = []
+            cpu_monitoring = True
+            
+            def cpu_monitor_thread():
+                while cpu_monitoring:
+                    try:
+                        cpu_pct = sample_container_cpu(container_name, 1)  # Sample every 1 second
+                        if cpu_pct > 0:
+                            cpu_values.append(cpu_pct)
+                        time.sleep(1)
+                    except Exception as e:
+                        if config.get("debug", False):
+                            print(f"CPU monitoring error: {e}")
+                        break
+            
+            cpu_thread = threading.Thread(target=cpu_monitor_thread, daemon=True)
+            cpu_thread.start()
 
             lat_ms = []
             stop_at = time.time() + run_seconds
@@ -114,15 +134,22 @@ def run_concurrency_grid(container_name, run_seconds, queries, search_callable):
                 pbar.n = run_seconds
                 pbar.refresh()
 
-            io_monitor.stop_monitoring(); io_thread.join(timeout=2)
+            # Stop monitoring
+            cpu_monitoring = False
+            io_monitor.stop_monitoring()
+            io_thread.join(timeout=run_seconds + 10)  # Wait for iostat to complete
+            cpu_thread.join(timeout=5)  # Wait for CPU monitoring to stop
+            
             io_stats = io_monitor.parse_bandwidth()
-            # t_cpu.join(timeout=0.1)
-
+            
+            # Calculate average CPU usage from collected samples
+            cpu_monitor = sum(cpu_values) / len(cpu_values) if cpu_values else 0.0
+            
             qps = len(lat_ms) / run_seconds
             p = percentiles(lat_ms)
             all_runs.append({
                 "conc": conc, "qps": qps, "p50": p["p50"], "p95": p["p95"], "p99": p["p99"],
-                "cpu": 0.0, **io_stats  # CPU monitoring disabled
+                "cpu": cpu_monitor, **io_stats
             })
 
         def _avg(k): return float(np.mean([x[k] for x in all_runs]))
@@ -167,11 +194,19 @@ def run_qdrant(ds, vec_override=None, qry_override=None):
     start = CONF["indexes"]["qdrant"]["hnsw"]["search"]["ef_search_start"]
     maxv  = CONF["indexes"]["qdrant"]["hnsw"]["search"]["ef_search_max"]
     best = start; val = start
-    while val <= maxv:
-        idx = qh.search(qh.connect(), name, queries[:64], CONF["topk"], ef_search=int(val))
-        if recall_at_k(gt_idx[:64], idx) >= CONF["target_recall_at_k"]:
-            best = val; break
+    max_iterations = 10  # Prevent infinite loop
+    iteration = 0
+    while val <= maxv and iteration < max_iterations:
+        try:
+            idx = qh.search(qh.connect(), name, queries[:64], CONF["topk"], ef_search=int(val))
+            if recall_at_k(gt_idx[:64], idx) >= CONF["target_recall_at_k"]:
+                best = val; break
+        except Exception as e:
+            log(f"[qdrant] Error during tuning ef_search={val}: {e}")
         val *= 2
+        iteration += 1
+    if iteration >= max_iterations:
+        log(f"[qdrant] Warning: Tuning reached max iterations, using ef_search={best}")
     tuned_ef = int(best)
     log(f"[qdrant][hnsw] tuned ef_search={tuned_ef}")
 
@@ -201,14 +236,22 @@ def run_weaviate(ds, vec_override=None, qry_override=None):
     start = CONF["indexes"]["weaviate"]["hnsw"]["search"]["ef_start"]
     maxv  = CONF["indexes"]["weaviate"]["hnsw"]["search"]["ef_max"]
     best = start; val = start
-    while val <= maxv:
-        wh.drop_recreate(conn, classname, d, "cosine", ef=int(val))
-        wh.insert(conn, classname, vectors)
-        time.sleep(2)
-        idx = wh.search(conn, classname, queries[:64], CONF["topk"], ef=int(val), hybrid=ENABLE_HYBRID, query_texts=["sample query"]*64 if ENABLE_HYBRID else None)
-        if recall_at_k(gt_idx[:64], idx) >= CONF["target_recall_at_k"]:
-            best = val; break
+    max_iterations = 10  # Prevent infinite loop
+    iteration = 0
+    while val <= maxv and iteration < max_iterations:
+        try:
+            wh.drop_recreate(conn, classname, d, "cosine", ef=int(val))
+            wh.insert(conn, classname, vectors)
+            time.sleep(2)
+            idx = wh.search(conn, classname, queries[:64], CONF["topk"], ef=int(val), hybrid=ENABLE_HYBRID, query_texts=["sample query"]*64 if ENABLE_HYBRID else None)
+            if recall_at_k(gt_idx[:64], idx) >= CONF["target_recall_at_k"]:
+                best = val; break
+        except Exception as e:
+            log(f"[weaviate] Error during tuning ef={val}: {e}")
         val *= 2
+        iteration += 1
+    if iteration >= max_iterations:
+        log(f"[weaviate] Warning: Tuning reached max iterations, using ef={best}")
     tuned_ef = int(best)
     log(f"[weaviate][hnsw] tuned ef={tuned_ef}")
 

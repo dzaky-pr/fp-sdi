@@ -1,28 +1,59 @@
 # bench/monitoring.py
-import os, time, json, threading, subprocess, docker
+import os, time, json, threading, subprocess
+try:
+    import docker
+except ImportError:
+    docker = None
+try:
+    import psutil
+except ImportError:
+    psutil = None
 from typing import Dict
 
 def sample_container_cpu(container_name: str, duration_s: int) -> float:
-    """Return average container CPU % over duration (docker stats compatible)."""
-    client = docker.from_env()
-    c = client.containers.get(container_name)
-    stats = c.stats(stream=True)
-    total = 0; n = 0
-    start = time.time()
-    for s in stats:
-        cpu = s["cpu_stats"]["cpu_usage"]["total_usage"]
-        sys = s["cpu_stats"]["system_cpu_usage"]
-        pcpu = s.get("precpu_stats", {})
-        p_cpu = pcpu.get("cpu_usage", {}).get("total_usage", cpu)
-        p_sys = pcpu.get("system_cpu_usage", sys)
-        cpu_delta = cpu - p_cpu
-        sys_delta = (sys - p_sys) or 1
-        perc = (cpu_delta / sys_delta) * len(s["cpu_stats"]["cpu_usage"].get("percpu_usage", [])) * 100.0
-        total += perc; n += 1
-        if time.time()-start >= duration_s: break
-    try: next(stats)
-    except: pass
-    return (total/n) if n else 0.0
+    """Return average container CPU % over duration (docker stats compatible, fallback to psutil)."""
+    if docker:
+        try:
+            client = docker.from_env()
+            c = client.containers.get(container_name)
+            
+            # Get initial stats
+            stats1 = c.stats(stream=False)
+            cpu1 = stats1["cpu_stats"]["cpu_usage"]["total_usage"]
+            sys1 = stats1["cpu_stats"]["system_cpu_usage"]
+            online_cpus = stats1["cpu_stats"]["online_cpus"]
+            
+            time.sleep(duration_s)
+            
+            # Get final stats
+            stats2 = c.stats(stream=False)
+            cpu2 = stats2["cpu_stats"]["cpu_usage"]["total_usage"]
+            sys2 = stats2["cpu_stats"]["system_cpu_usage"]
+            
+            # Calculate CPU percentage
+            cpu_delta = cpu2 - cpu1
+            sys_delta = sys2 - sys1
+            
+            if sys_delta > 0:
+                cpu_percent = (cpu_delta / sys_delta) * online_cpus * 100.0
+                return max(0.0, cpu_percent)  # Ensure non-negative
+            else:
+                return 0.0
+                
+        except Exception as e:
+            print(f"Docker stats failed: {e}, falling back to psutil")
+
+    # Fallback to psutil for CPU monitoring
+    if psutil:
+        try:
+            start_time = time.time()
+            start_cpu = psutil.cpu_percent(interval=None)
+            time.sleep(duration_s)
+            end_cpu = psutil.cpu_percent(interval=None)
+            return (start_cpu + end_cpu) / 2.0
+        except Exception as e:
+            print(f"psutil CPU monitoring failed: {e}")
+    return 0.0
 
 class IOMonitor:
     """Monitor I/O (bpftrace jika tersedia; fallback iostat)."""
@@ -40,8 +71,8 @@ class IOMonitor:
                 @bytes_hist = hist(args->bytes);
                 @total_bytes += args->bytes;
                 @io_count++;
-                if (args->rwbs[0] == 'R') { @read_bytes += args->bytes; @read_count++; }
-                else if (args->rwbs[0] == 'W') { @write_bytes += args->bytes; @write_count++; }
+                if (args->rwbs[0] == "R") { @read_bytes += args->bytes; @read_count++; }
+                else if (args->rwbs[0] == "W") { @write_bytes += args->bytes; @write_count++; }
             }
             END {
                 printf("=== FINAL STATS ===\n");
@@ -64,12 +95,18 @@ class IOMonitor:
                     stdout, stderr = self.bpftrace_proc.communicate(timeout=duration_seconds + 5)
                     self.results['bpftrace_output'] = stdout
                     self.results['bpftrace_stderr'] = stderr
+                    if self.bpftrace_proc.returncode != 0:
+                        print(f"I/O monitoring: bpftrace failed with returncode {self.bpftrace_proc.returncode}, falling back to iostat")
+                        self._iostat_fallback(duration_seconds)
                 except subprocess.TimeoutExpired:
                     os.killpg(os.getpgid(self.bpftrace_proc.pid), 15)
                     stdout, stderr = self.bpftrace_proc.communicate()
                     self.results['bpftrace_output'] = stdout
                     self.results['bpftrace_stderr'] = stderr
-            except Exception:
+                    print(f"I/O monitoring: bpftrace timed out, falling back to iostat")
+                    self._iostat_fallback(duration_seconds)
+            except Exception as e:
+                print(f"I/O monitoring: bpftrace failed ({e}), falling back to iostat")
                 self._iostat_fallback(duration_seconds)
             self.monitoring = False
         self.monitoring = True
@@ -77,14 +114,61 @@ class IOMonitor:
         return t
 
     def _iostat_fallback(self, duration_seconds: int):
+        print(f"I/O monitoring: Starting iostat fallback for {duration_seconds}s")
+        self.duration_seconds = duration_seconds  # Ensure duration is set
         try:
-            cmd = ['iostat', '-x', '1', str(duration_seconds)]
+            # macOS iostat doesn't support -x, use -d for disk stats
+            import platform
+            system = platform.system()
+            print(f"I/O monitoring: Detected platform: {system}")
+            if system == 'Darwin':  # macOS
+                cmd = ['iostat', '-d', '1', str(duration_seconds)]
+            else:  # Linux
+                cmd = ['iostat', '-d', '1', str(duration_seconds)]  # Simplified for container
+            print(f"I/O monitoring: Running iostat command: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration_seconds + 5)
+            print(f"I/O monitoring: iostat returncode: {result.returncode}")
             self.results['iostat_output'] = result.stdout
             self.results['iostat_stderr'] = result.stderr
+            print(f"I/O monitoring: iostat completed, output length: {len(result.stdout)}")
+            if result.stderr:
+                print(f"I/O monitoring: iostat stderr: {result.stderr}")
         except Exception as e:
-            self.results['error'] = f"iostat fallback failed: {e}"
-            # Final fallback: skip I/O monitoring
+            print(f"iostat fallback failed: {e}, trying psutil")
+            import traceback
+            traceback.print_exc()
+            self._psutil_fallback(duration_seconds)
+
+    def _psutil_fallback(self, duration_seconds: int):
+        """Fallback I/O monitoring using psutil disk I/O counters."""
+        if not psutil:
+            self.results['error'] = "psutil not available"
+            self.results['skipped'] = True
+            return
+
+        try:
+            start_counters = psutil.disk_io_counters()
+            time.sleep(duration_seconds)
+            end_counters = psutil.disk_io_counters()
+
+            if start_counters and end_counters:
+                read_bytes = end_counters.read_bytes - start_counters.read_bytes
+                write_bytes = end_counters.write_bytes - start_counters.write_bytes
+                total_bytes = read_bytes + write_bytes
+
+                self.results['psutil_output'] = {
+                    'read_bytes': read_bytes,
+                    'write_bytes': write_bytes,
+                    'total_bytes': total_bytes,
+                    'read_count': end_counters.read_count - start_counters.read_count,
+                    'write_count': end_counters.write_count - start_counters.write_count,
+                    'duration': duration_seconds
+                }
+            else:
+                self.results['error'] = "psutil disk counters not available"
+                self.results['skipped'] = True
+        except Exception as e:
+            self.results['error'] = f"psutil fallback failed: {e}"
             self.results['skipped'] = True
 
     def stop_monitoring(self):
@@ -98,32 +182,77 @@ class IOMonitor:
 
     def parse_bandwidth(self) -> Dict[str, float]:
         parsed = {'read_mb': 0.0, 'write_mb': 0.0, 'total_mb': 0.0, 'avg_bandwidth_mb_s': 0.0}
+        
         if 'skipped' in self.results:
             return parsed  # Return zeros if skipped
-        if 'bpftrace_output' in self.results:
-            out = self.results['bpftrace_output']
-            for line in out.splitlines():
-                if 'Total bytes:' in line:
-                    parsed['total_mb'] = int(line.split(':',1)[1]) / (1024*1024)
-                elif 'Read bytes:' in line:
-                    parsed['read_mb'] = int(line.split(':',1)[1]) / (1024*1024)
-                elif 'Write bytes:' in line:
-                    parsed['write_mb'] = int(line.split(':',1)[1]) / (1024*1024)
-            if parsed['total_mb'] and self.duration_seconds:
-                parsed['avg_bandwidth_mb_s'] = parsed['total_mb'] / float(self.duration_seconds)
+        
+        try:
+            # Check for valid bpftrace output first
+            has_valid_bpftrace = ('bpftrace_output' in self.results and 
+                                 self.results['bpftrace_output'].strip() and
+                                 'Total bytes:' in self.results['bpftrace_output'])
+            
+            if has_valid_bpftrace:
+                out = self.results['bpftrace_output']
+                for line in out.splitlines():
+                    if 'Total bytes:' in line:
+                        parsed['total_mb'] = int(line.split(':',1)[1]) / (1024*1024)
+                    elif 'Read bytes:' in line:
+                        parsed['read_mb'] = int(line.split(':',1)[1]) / (1024*1024)
+                    elif 'Write bytes:' in line:
+                        parsed['write_mb'] = int(line.split(':',1)[1]) / (1024*1024)
+                if parsed['total_mb'] and self.duration_seconds:
+                    parsed['avg_bandwidth_mb_s'] = parsed['total_mb'] / float(self.duration_seconds)
 
-        elif 'iostat_output' in self.results:
-            out = self.results['iostat_output']
-            read_sum = write_sum = cnt = 0.0
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) > 10 and parts[0] != 'Device':
-                    try:
-                        read_kb_s = float(parts[5]); write_kb_s = float(parts[6])
-                        read_sum += read_kb_s / 1024.0; write_sum += write_kb_s / 1024.0; cnt += 1.0
-                    except: continue
-            if cnt > 0:
-                parsed['avg_bandwidth_mb_s'] = (read_sum + write_sum) / cnt
+            elif 'iostat_output' in self.results:
+                out = self.results['iostat_output']
+                read_sum = write_sum = cnt = 0.0
+                import platform
+                if platform.system() == 'Darwin':  # macOS format: disk0 KB/t tps MB/s
+                    lines = out.splitlines()
+                    for line in lines[2:]:  # Skip first 2 header lines
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            try:
+                                mb_s = float(parts[2])  # MB/s is index 2
+                                read_sum += mb_s / 2.0  # Assume 50/50 split
+                                write_sum += mb_s / 2.0
+                                cnt += 1.0
+                            except (ValueError, IndexError) as e:
+                                continue
+                else:  # Linux format in container
+                    for line in out.splitlines():
+                        parts = line.split()
+                        if len(parts) > 6 and parts[0] not in ['Device', 'Linux', ''] and not parts[0].startswith('(') and not parts[0].startswith('_'):
+                            try:
+                                read_kb_s = float(parts[2])   # kB_read/s index 2
+                                write_kb_s = float(parts[3])  # kB_wrtn/s index 3
+                                read_sum += read_kb_s / 1024.0  # Convert to MB/s
+                                write_sum += write_kb_s / 1024.0
+                                cnt += 1.0
+                            except (ValueError, IndexError) as e:
+                                continue
+                
+                if cnt > 0:
+                    avg_read_mb_s = read_sum / cnt
+                    avg_write_mb_s = write_sum / cnt
+                    parsed['read_mb'] = avg_read_mb_s * self.duration_seconds
+                    parsed['write_mb'] = avg_write_mb_s * self.duration_seconds
+                    parsed['total_mb'] = (avg_read_mb_s + avg_write_mb_s) * self.duration_seconds
+                    parsed['avg_bandwidth_mb_s'] = avg_read_mb_s + avg_write_mb_s
+
+            elif 'psutil_output' in self.results:
+                psutil_data = self.results['psutil_output']
+                parsed['read_mb'] = psutil_data['read_bytes'] / (1024 * 1024)
+                parsed['write_mb'] = psutil_data['write_bytes'] / (1024 * 1024)
+                parsed['total_mb'] = psutil_data['total_bytes'] / (1024 * 1024)
+                if psutil_data['duration'] > 0:
+                    parsed['avg_bandwidth_mb_s'] = parsed['total_mb'] / psutil_data['duration']
+                
+        except Exception as e:
+            # Return zeros on exception instead of crashing
+            return {'read_mb': 0.0, 'write_mb': 0.0, 'total_mb': 0.0, 'avg_bandwidth_mb_s': 0.0}
+
         return parsed
 
 def run_fio_baseline(target_dir: str = "/datasets", duration: int = 30) -> Dict:

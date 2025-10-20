@@ -1,0 +1,30 @@
+🧩 Reliability (Keandalan)
+Makna: Sistem tetap berfungsi sebagaimana diharapkan pengguna, bahkan ketika terjadi kesalahan (faults).
+Tujuan: Mencegah fault berubah menjadi failure.
+Jenis gangguan:
+Hardware fault (disk rusak, listrik padam) → ditangani dengan redundancy.
+Software error (bug, proses runaway, cascading failure) → mitigasi dengan isolasi & testing.
+Human error (konfigurasi salah) → cegah dengan desain aman, monitoring, recovery cepat, dan pelatihan.
+Intinya: sistem harus fault-tolerant, tetap melayani pengguna dengan benar di bawah kondisi abnormal.
+
+⚙️ Scalability (Skalabilitas)
+Makna: Kemampuan sistem untuk menjaga performa saat beban meningkat.
+Dua pendekatan:
+Scale-up: tambah sumber daya di satu mesin (CPU, RAM).
+Scale-out: tambah jumlah mesin (distribusi horizontal).
+Parameter beban: tergantung sistem — misalnya request/sec, active users, read/write ratio, cache hit rate, dll.
+Metrik kinerja utama:
+Throughput (jumlah operasi/detik)
+Response time / Latency, termasuk percentile tail latency (p95, p99).
+Tujuan: Tetap menjaga SLO/SLA meski volume data atau pengguna meningkat.
+
+🔧 Maintainability (Kemudahan Pemeliharaan)
+Makna: Seberapa mudah sistem dipelihara, diperbaiki, dan dikembangkan seiring waktu.
+Tiga aspek utama:
+Operability – mudah dioperasikan, dipantau, dan dipulihkan bila gagal.
+→ monitoring, otomatisasi, dokumentasi, self-healing, predictable behavior.
+Simplicity – minim kompleksitas buatan (accidental complexity), modular, mudah dipahami.
+→ gunakan abstraksi dan desain bersih.
+Evolvability – mudah diubah untuk kebutuhan baru tanpa gangguan besar.
+→ dukung refactoring, fitur baru, dan migrasi platform.
+Tujuan: menekan biaya jangka panjang & memudahkan adaptasi terhadap perubahan.

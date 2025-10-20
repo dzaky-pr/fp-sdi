@@ -21,8 +21,8 @@ help:
 	@echo "  make test-all      - Run tests untuk semua databases"
 	@echo ""
 	@echo "Benchmark commands (run dari bench-shell):"
-	@echo "  python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-200k-d768"
-	@echo "  python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-200k-d768"
+	@echo "  python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768"
+	@echo "  python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768"
 	@echo ""
 
 build:
@@ -30,6 +30,14 @@ build:
 	docker compose build
 
 up:
+	@echo "Checking NVME_ROOT environment variable..."
+	@if [ -z "$$NVME_ROOT" ]; then \
+		echo "❌ ERROR: NVME_ROOT environment variable not set!"; \
+		echo "   Run: export NVME_ROOT=\"/Users/dzakyrifai/nvme-vdb\""; \
+		echo "   Or: export NVME_ROOT=\"/Users/dzakyrifai/nvme-vdb\" && make up"; \
+		exit 1; \
+	fi
+	@echo "✅ NVME_ROOT is set to: $$NVME_ROOT"
 	@echo "Starting Qdrant, Weaviate, and Bench containers..."
 	docker compose up -d
 	@echo "Waiting for services to be healthy..."
@@ -55,11 +63,11 @@ bench-shell:
 
 test-qdrant:
 	@echo "Testing Qdrant connection..."
-	docker compose exec bench python3 -c "from qdrant_helper import test_connection; test_connection()"
+	docker compose exec bench python3 -c "from clients import QdrantClientHelper; c = QdrantClientHelper(); client = c.connect(); print('✅ Qdrant connected successfully')"
 
 test-weaviate:
 	@echo "Testing Weaviate connection..."
-	docker compose exec bench python3 -c "from weaviate_client import test_connection; test_connection()"
+	docker compose exec bench python3 -c "from clients import WeaviateClient; c = WeaviateClient(); client = c.connect(); print('✅ Weaviate connected successfully')"
 
 test-all: test-qdrant test-weaviate
 	@echo "✅ All connection tests passed!"

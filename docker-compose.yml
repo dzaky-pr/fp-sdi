@@ -20,9 +20,13 @@ services:
     volumes:
       - ${NVME_ROOT:-./nvme}/qdrant:/qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test:
+        [
+          "CMD-SHELL",
+          "apt-get update && apt-get install -y curl && curl -f http://localhost:6333/healthz > /dev/null 2>&1 || exit 1",
+        ]
       interval: 10s
-      timeout: 5s
+      timeout: 30s
       retries: 30
 
   # ============================================================================
@@ -42,7 +46,11 @@ services:
     volumes:
       - ${NVME_ROOT:-./nvme}/weaviate:/var/lib/weaviate
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/.well-known/ready"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget --quiet --tries=1 --spider http://localhost:8080/v1/meta || exit 1",
+        ]
       interval: 10s
       timeout: 5s
       retries: 30
