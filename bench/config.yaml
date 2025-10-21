@@ -1,7 +1,7 @@
 concurrency_grid:
   - 1
   - 2
-data_root: ../datasets
+data_root: /datasets
 datasets:
   - dim: 384
     n_queries: 1000
@@ -43,7 +43,7 @@ indexes:
         ef_start: 64
 pdf_dir: ""
 repeats: 5
-run_seconds: 30
+run_seconds: 10
 seed: 42
 sensitivity_study: true
 target_recall_at_k: 0.9

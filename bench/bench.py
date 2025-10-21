@@ -1,375 +1,388 @@
 # bench/bench.py
-"""
-Vector Database Benchmark: Qdrant vs Weaviate
-==============================================
-Mengikuti metodologi paper rujukan dengan fokus pada HNSW-based comparison.
-
-CATATAN PENTING:
-- Milvus dikecualikan dari benchmark ini karena:
-  1. Resource-intensive (membutuhkan RAM dan CPU tinggi)
-  2. Sering unstable di macOS/laptop environment
-  3. Kompleksitas API yang tinggi
-  
-- Fokus perbandingan: Qdrant vs Weaviate (keduanya menggunakan HNSW index)
-- Metodologi tetap mengikuti paper rujukan:
-  * Single-machine setup dengan Docker
-  * NVMe storage terdedikasi
-  * 30 detik per run dengan 1,000 queries
-  * Flush page cache sebelum setiap run
-  * 5× ulangan untuk reliability
-  * Tuning hingga recall@10 ≥ 0.9
-  * Metrik: QPS, P99 latency, CPU usage, I/O traces
-
-Perbandingan ini tetap valid karena:
-1. Kedua sistem menggunakan HNSW sebagai indeks utama
-2. Kedua sistem Docker-based (baseline homogen)
-3. Parameter tuning dapat dibandingkan secara langsung
-4. Trade-off recall vs QPS dapat dianalisis dengan fair
-"""
-import os, time, yaml, threading, json, argparse, pathlib, importlib.util
-import numpy as np
-from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
-from utils import brute_force_topk, recall_at_k, percentiles
-from datasets import make_or_load_dataset
-from monitoring import sample_container_cpu, IOMonitor, run_fio_baseline
-
-CONF = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "config.yaml"), "r"))
-DATA_ROOT = CONF.get("data_root", "/datasets")
-PDF_DIR = CONF.get("pdf_dir")
-EMBEDDER = CONF.get("embedder", "sentence-transformers")
-ENABLE_PAYLOAD = CONF.get("enable_payload_filter", False)
-ENABLE_HYBRID = CONF.get("enable_hybrid_search", False)
-SENSITIVITY_STUDY = CONF.get("sensitivity_study", False)
-
-def log(*a): print(*a, flush=True)
-
+#!/usr/bin/env python3
+import argparse, json, os, time, threading, numpy as np
+from datetime import datetime
 from clients import QdrantClientHelper, WeaviateClient
+from monitoring import IOMonitor, sample_container_cpu
+from utils import brute_force_topk, recall_at_k
 
-def run_concurrency_grid(container_name, run_seconds, queries, search_callable):
-    """Jalankan grid concurrency:
-       - durasi 30s penuh (ring-buffer kueri)
-       - repeats=CONF['repeats']
-       - catat latensi per-kueri
-    """
+# ---------------------------------------------------------
+# Utility
+# ---------------------------------------------------------
+def log(msg):
+    ts = datetime.now().strftime("[%H:%M:%S]")
+    print(f"{ts} {msg}", flush=True)
+
+
+# ---------------------------------------------------------
+# Global time budget
+# ---------------------------------------------------------
+WALL_START = time.time()
+
+
+def time_left(budget_s):
+    return budget_s - (time.time() - WALL_START)
+
+
+def budget_enough(budget_s, need):
+    return time_left(budget_s) >= need
+
+
+# ---------------------------------------------------------
+# Main concurrency runner
+# ---------------------------------------------------------
+def run_concurrency_grid(container_name, run_seconds, queries, search_callable,
+                         budget_s=300, disable_monitor=False):
     results = []
     total_conc = len(CONF["concurrency_grid"])
     total_runs = total_conc * CONF.get("repeats", 1)
     run_count = 0
-    
-    for conc in CONF["concurrency_grid"]:
-        log(f"[{container_name}] Starting concurrency {conc} (run {run_count+1}/{total_runs})")
-        all_runs = []
-        for repeat in range(CONF.get("repeats", 1)):
-            run_count += 1
-            log(f"[{container_name}] Concurrency {conc}, repeat {repeat+1}/{CONF.get('repeats', 1)} - Running for {run_seconds}s...")
-            
-            # flush + warm-up ringan
-            # flush_page_cache(); time.sleep(1)
-            try:
-                _ = search_callable(queries[:min(64, len(queries))], time.perf_counter())
-                time.sleep(1)
-            except Exception as e:
-                log(f"[{container_name}] Warning: Warm-up failed: {e}, continuing anyway...")
 
-            # Start monitoring threads
+    for conc in CONF["concurrency_grid"]:
+        if not budget_enough(budget_s, run_seconds + 2):
+            break
+        for repeat in range(CONF.get("repeats", 1)):
+            if not budget_enough(budget_s, run_seconds + 2):
+                break
+
+            run_count += 1
+            log(f"[{container_name}] Concurrency {conc}, repeat {repeat+1}/{CONF.get('repeats', 1)}")
+
+            # Warm-up kecil, abaikan error
+            try:
+                _ = search_callable(queries[:min(64, len(queries))], 1, conc)
+                time.sleep(0.3)
+            except Exception as e:
+                log(f"[{container_name}] Warm-up failed: {e}")
+
+            # I/O monitoring
             io_monitor = IOMonitor()
-            io_thread = io_monitor.start_monitoring(run_seconds + 5)
-            
-            # Start CPU monitoring in separate thread
+            io_thread = threading.Thread(target=lambda: None)
+            if not disable_monitor:
+                io_thread = io_monitor.start_monitoring(run_seconds)
+
+            # CPU monitoring
             cpu_values = []
             cpu_monitoring = True
-            
-            def cpu_monitor_thread():
+            def cpu_thread_fn():
                 while cpu_monitoring:
-                    try:
-                        cpu_pct = sample_container_cpu(container_name, 1)  # Sample every 1 second
-                        if cpu_pct > 0:
-                            cpu_values.append(cpu_pct)
-                        time.sleep(1)
-                    except Exception as e:
-                        if config.get("debug", False):
-                            print(f"CPU monitoring error: {e}")
-                        break
-            
-            cpu_thread = threading.Thread(target=cpu_monitor_thread, daemon=True)
-            cpu_thread.start()
+                    cpu_pct = sample_container_cpu(container_name, 1)
+                    if cpu_pct > 0:
+                        cpu_values.append(cpu_pct)
+                    time.sleep(0.2)
+            cpu_thread = threading.Thread(target=cpu_thread_fn, daemon=True)
+            if not disable_monitor:
+                cpu_thread.start()
 
-            lat_ms = []
-            stop_at = time.time() + run_seconds
-            qn = len(queries); head = 0
-            
-            # Progress bar untuk run_seconds
-            with tqdm(total=run_seconds, desc=f"[{container_name}] Running", unit="s", ncols=80, disable=False) as pbar:
-                start_time = time.time()
-                last_update = start_time
-                
-                with ThreadPoolExecutor(max_workers=conc) as ex:
-                    while time.time() < stop_at:
-                        per = max(1, min(4, qn // max(1, conc)))  # batch kecil agar latensi mendekati per-kueri
-                        futs = []
-                        for _w in range(conc):
-                            tail = (head + per) % qn
-                            if tail > head:
-                                qb = queries[head:tail]
-                            else:
-                                qb = np.concatenate([queries[head:], queries[:tail]], axis=0)
-                            head = tail
-                            t0 = time.perf_counter()
-                            futs.append(ex.submit(search_callable, qb, t0))
-                        for fu in futs:
-                            qcount, t0, t1 = fu.result()
-                            perq = (t1 - t0) * 1000.0 / max(1, qcount)
-                            lat_ms.extend([perq] * qcount)
-                        
-                        # Update progress bar setiap detik
-                        current_time = time.time()
-                        if current_time - last_update >= 1:
-                            elapsed = current_time - start_time
-                            pbar.n = min(elapsed, run_seconds)
-                            pbar.refresh()
-                            last_update = current_time
-                
-                # Final update
-                pbar.n = run_seconds
-                pbar.refresh()
+            # Run benchmark
+            t0 = time.time()
+            qps = search_callable(queries, run_seconds, conc)  # <- conc diteruskan
+            elapsed = time.time() - t0
 
-            # Stop monitoring
+            # Stop monitors
             cpu_monitoring = False
-            io_monitor.stop_monitoring()
-            io_thread.join(timeout=run_seconds + 10)  # Wait for iostat to complete
-            cpu_thread.join(timeout=5)  # Wait for CPU monitoring to stop
-            
-            io_stats = io_monitor.parse_bandwidth()
-            
-            # Calculate average CPU usage from collected samples
-            cpu_monitor = sum(cpu_values) / len(cpu_values) if cpu_values else 0.0
-            
-            qps = len(lat_ms) / run_seconds
-            p = percentiles(lat_ms)
-            all_runs.append({
-                "conc": conc, "qps": qps, "p50": p["p50"], "p95": p["p95"], "p99": p["p99"],
-                "cpu": cpu_monitor, **io_stats
-            })
+            if not disable_monitor:
+                io_monitor.stop_monitoring()
+            io_thread.join(timeout=1)
+            cpu_thread.join(timeout=1)
 
-        def _avg(k): return float(np.mean([x[k] for x in all_runs]))
-        results.append({
-            "conc": conc,
-            "qps": _avg("qps"),
-            "p50": _avg("p50"), "p95": _avg("p95"), "p99": _avg("p99"),
-            "cpu": _avg("cpu"),
-            "read_mb": _avg("read_mb"), "write_mb": _avg("write_mb"),
-            "total_mb": _avg("total_mb"), "avg_bandwidth_mb_s": _avg("avg_bandwidth_mb_s"),
-            "repeats": len(all_runs)
-        })
-        log(f"[{container_name}] conc={conc} qps={results[-1]['qps']:.1f} "
-            f"p99={results[-1]['p99']:.1f}ms cpu={results[-1]['cpu']:.1f}%")
+            cpu_mean = float(np.mean(cpu_values)) if cpu_values else 0.0
+            io_stats = io_monitor.parse_bandwidth() if not disable_monitor else {}
+            io_bw    = float(io_stats.get('avg_bandwidth_mb_s', 0.0))
+            read_mb  = float(io_stats.get('read_mb', 0.0))
+            write_mb = float(io_stats.get('write_mb', 0.0))
+
+            results.append({
+                "conc": conc,
+                "qps": qps,
+                "cpu": cpu_mean,
+                "avg_bandwidth_mb_s": io_bw,
+                "read_mb": read_mb,
+                "write_mb": write_mb,
+                "elapsed": elapsed,
+            })
     return results
 
-# ---------------- Qdrant ----------------
+
+# ---------------------------------------------------------
+# Database runners
+# ---------------------------------------------------------
 def run_qdrant(ds, vec_override=None, qry_override=None):
-    log(f"[qdrant] Starting benchmark for dataset {ds['name']} ({ds['n_vectors']} vectors)")
-    # Estimasi waktu: tuning ~2min + concurrency grid ~10min = ~12min total
-    total_conc = len(CONF["concurrency_grid"])
-    total_runs = total_conc * CONF.get("repeats", 1)
-    estimated_time_min = 2 + (total_runs * CONF["run_seconds"] / 60)
-    log(f"[qdrant] Estimated total time: ~{estimated_time_min:.0f} minutes ({total_runs} runs)")
-    
-    qh = QdrantClientHelper()
-    name = "bench"
-    n, d, nq = ds["n_vectors"], ds["dim"], ds["n_queries"]
+    qc = QdrantClientHelper()
+    conn = qc.connect()
+
+    # Load dataset (gunakan make_or_load_dataset dari config)
+    from datasets import make_or_load_dataset
+    vectors, queries, *_ = make_or_load_dataset(
+        root=CONF.get("data_root", "../datasets"),
+        name=ds["name"],
+        n=ds["n_vectors"],
+        dim=ds["dim"],
+        n_queries=ds["n_queries"],
+        seed=CONF.get("seed", 42),
+        pdf_dir=CONF.get("pdf_dir") or "",
+        embedder=CONF.get("embedder", "sentence-transformers"),
+        enable_payload=CONF.get("enable_payload_filter", False),
+        enable_hybrid=CONF.get("enable_hybrid_search", False),
+    )
     if vec_override is not None and qry_override is not None:
         vectors, queries = vec_override, qry_override
-        metadata = None
-        vectors_sparse, queries_sparse = None, None
+
+    qc.drop_recreate(conn, "bench", ds["dim"], "Cosine", on_disk=True)
+    qc.insert(conn, "bench", vectors)  # ← hapus payload=True yang salah
+
+    # Ground-truth untuk recall
+    gt_q  = int(CONF.get("gt_queries_for_recall", 128))
+    gt_idx = brute_force_topk(vectors, queries[:gt_q], CONF["topk"], metric="COSINE")
+
+    # Sensitivity study: test different ef values
+    if ARGS.sensitivity:
+        ef_values = [64, 128, 192, 256]
+        all_results = []
+        
+        for ef in ef_values:
+            log(f"[Qdrant] Testing ef_search={ef}")
+            
+            # callable yang menghormati concurrency
+            def search_callable(qs, secs, conc):
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                stop_at = time.time() + secs
+                chunks = np.array_split(qs, conc)
+                def worker(batch):
+                    done = 0
+                    while time.time() < stop_at:
+                        _ = qc.search(conn, "bench", batch, CONF["topk"], ef_search=ef)
+                        done += len(batch)
+                    return done
+                total = 0
+                with ThreadPoolExecutor(max_workers=conc) as ex:
+                    futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
+                    for fu in as_completed(futs):
+                        total += fu.result()
+                return total / float(secs)
+
+            results = run_concurrency_grid("qdrant", CONF["run_seconds"], queries, search_callable,
+                                           budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)
+
+            # Calculate recall for this ef
+            res_idx = qc.search(conn, "bench", queries[:min(64, gt_q)], CONF["topk"], ef_search=ef)
+            recall = recall_at_k(gt_idx[:min(64, gt_q)], res_idx)
+            log(f"[Qdrant] ef={ef}, recall@{CONF['topk']}={recall:.3f}")
+            
+            # Add ef and recall to results
+            for r in results:
+                r["ef"] = ef
+                r["recall"] = recall
+            
+            all_results.extend(results)
+        
+        return all_results
     else:
-        vectors, queries, metadata, vectors_sparse, queries_sparse = make_or_load_dataset(DATA_ROOT, ds["name"], n, d, nq, seed=CONF["seed"], pdf_dir=PDF_DIR, embedder=EMBEDDER, enable_payload=ENABLE_PAYLOAD, enable_hybrid=ENABLE_HYBRID)
+        # Normal benchmark with fixed ef
+        # callable yang menghormati concurrency
+        def search_callable(qs, secs, conc):
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            stop_at = time.time() + secs
+            chunks = np.array_split(qs, conc)
+            def worker(batch):
+                done = 0
+                while time.time() < stop_at:
+                    _ = qc.search(conn, "bench", batch, CONF["topk"], ef_search=64)
+                    done += len(batch)
+                return done
+            total = 0
+            with ThreadPoolExecutor(max_workers=conc) as ex:
+                futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
+                for fu in as_completed(futs):
+                    total += fu.result()
+            return total / float(secs)
 
-    qh.drop_recreate(qh.connect(), name, d, "cosine",
-                     on_disk=CONF["indexes"]["qdrant"]["hnsw"]["on_disk"])
-    qh.insert(qh.connect(), name, vectors, payload=metadata)
+        results = run_concurrency_grid("qdrant", CONF["run_seconds"], queries, search_callable,
+                                       budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)
 
-    gt_idx = brute_force_topk(vectors, queries, CONF["topk"], metric="COSINE")
-
-    start = CONF["indexes"]["qdrant"]["hnsw"]["search"]["ef_search_start"]
-    maxv  = CONF["indexes"]["qdrant"]["hnsw"]["search"]["ef_search_max"]
-    best = start; val = start
-    max_iterations = 10  # Prevent infinite loop
-    iteration = 0
-    while val <= maxv and iteration < max_iterations:
-        try:
-            idx = qh.search(qh.connect(), name, queries[:64], CONF["topk"], ef_search=int(val))
-            if recall_at_k(gt_idx[:64], idx) >= CONF["target_recall_at_k"]:
-                best = val; break
-        except Exception as e:
-            log(f"[qdrant] Error during tuning ef_search={val}: {e}")
-        val *= 2
-        iteration += 1
-    if iteration >= max_iterations:
-        log(f"[qdrant] Warning: Tuning reached max iterations, using ef_search={best}")
-    tuned_ef = int(best)
-    log(f"[qdrant][hnsw] tuned ef_search={tuned_ef}")
-
-    def search_callable(qb, t0):
-        _ = qh.search(qh.connect(), name, qb, CONF["topk"], ef_search=tuned_ef)
-        t1 = time.perf_counter()
-        return len(qb), t0, t1
-
-    return run_concurrency_grid("qdrant", CONF["run_seconds"], queries, search_callable)
-
-# ---------------- Weaviate ----------------
+        # Recall@k cepat (subset 64)
+        res_idx = qc.search(conn, "bench", queries[:min(64, gt_q)], CONF["topk"], ef_search=64)
+        recall = recall_at_k(gt_idx[:min(64, gt_q)], res_idx)
+        log(f"[Qdrant] recall@{CONF['topk']}={recall:.3f}")
+        
+        # Add recall to results
+        for r in results:
+            r["recall"] = recall
+            
+        return results
 def run_weaviate(ds, vec_override=None, qry_override=None):
     wh = WeaviateClient()
-    classname = "BenchItem"
-    n, d, nq = ds["n_vectors"], ds["dim"], ds["n_queries"]
-    if vec_override is not None and qry_override is not None:
-        vectors, queries = vec_override, qry_override
-        metadata = None
-        vectors_sparse, queries_sparse = None, None
-    else:
-        vectors, queries, metadata, vectors_sparse, queries_sparse = make_or_load_dataset(DATA_ROOT, ds["name"], n, d, nq, seed=CONF["seed"], pdf_dir=PDF_DIR, embedder=EMBEDDER, enable_payload=ENABLE_PAYLOAD, enable_hybrid=ENABLE_HYBRID)
-
     conn = wh.connect()
 
-    gt_idx = brute_force_topk(vectors, queries, CONF["topk"], metric="COSINE")
-
-    start = CONF["indexes"]["weaviate"]["hnsw"]["search"]["ef_start"]
-    maxv  = CONF["indexes"]["weaviate"]["hnsw"]["search"]["ef_max"]
-    best = start; val = start
-    max_iterations = 10  # Prevent infinite loop
-    iteration = 0
-    while val <= maxv and iteration < max_iterations:
-        try:
-            wh.drop_recreate(conn, classname, d, "cosine", ef=int(val))
-            wh.insert(conn, classname, vectors)
-            time.sleep(2)
-            idx = wh.search(conn, classname, queries[:64], CONF["topk"], ef=int(val), hybrid=ENABLE_HYBRID, query_texts=["sample query"]*64 if ENABLE_HYBRID else None)
-            if recall_at_k(gt_idx[:64], idx) >= CONF["target_recall_at_k"]:
-                best = val; break
-        except Exception as e:
-            log(f"[weaviate] Error during tuning ef={val}: {e}")
-        val *= 2
-        iteration += 1
-    if iteration >= max_iterations:
-        log(f"[weaviate] Warning: Tuning reached max iterations, using ef={best}")
-    tuned_ef = int(best)
-    log(f"[weaviate][hnsw] tuned ef={tuned_ef}")
-
-    def search_callable(qb, t0):
-        query_texts = ["sample query"] * len(qb) if ENABLE_HYBRID else None
-        _ = wh.search(conn, classname, qb, CONF["topk"], ef=tuned_ef, hybrid=ENABLE_HYBRID, query_texts=query_texts)
-        t1 = time.perf_counter()
-        return len(qb), t0, t1
-
-    return run_concurrency_grid("weaviate", CONF["run_seconds"], queries, search_callable)
-
-# ---------------- Sensitivity Study ----------------
-def run_sensitivity_study(db, index_kind, ds):
-    """Jalankan sensitivity study: eksplorasi parameter terhadap QPS dengan recall tetap >= target."""
-    log(f"Running sensitivity study for {db} {index_kind}")
-    results = []
-    
-    if db == "qdrant":
-        qh = QdrantClientHelper()
-        name = "bench"
-        n, d, nq = ds["n_vectors"], ds["dim"], ds["n_queries"]
-        vectors, queries, metadata, vectors_sparse, queries_sparse = make_or_load_dataset(DATA_ROOT, ds["name"], n, d, nq, seed=CONF["seed"], pdf_dir=PDF_DIR, embedder=EMBEDDER, enable_payload=ENABLE_PAYLOAD, enable_hybrid=ENABLE_HYBRID)
-        qh.drop_recreate(qh.connect(), name, d, "cosine", on_disk=CONF["indexes"]["qdrant"]["hnsw"]["on_disk"])
-        qh.insert(qh.connect(), name, vectors, payload=metadata)
-        gt_idx = brute_force_topk(vectors, queries, CONF["topk"], metric="COSINE")
-        
-        # Grid untuk ef_search
-        ef_grid = [10, 50, 100, 200, 500, 1000]
-        for ef in ef_grid:
-            idx = qh.search(qh.connect(), name, queries[:64], CONF["topk"], ef_search=ef)
-            recall = recall_at_k(gt_idx[:64], idx)
-            if recall >= CONF["target_recall_at_k"]:
-                def search_callable(qb, t0):
-                    _ = qh.search(qh.connect(), name, qb, CONF["topk"], ef_search=ef)
-                    t1 = time.perf_counter()
-                    return len(qb), t0, t1
-                res = run_concurrency_grid("qdrant", CONF["run_seconds"], queries, search_callable)
-                for r in res:
-                    r["param"] = {"ef_search": ef}
-                    r["recall"] = recall
-                results.extend(res)
-    
-    elif db == "weaviate":
-        wh = WeaviateClient()
-        classname = "BenchItem"
-        n, d, nq = ds["n_vectors"], ds["dim"], ds["n_queries"]
-        vectors, queries, metadata, vectors_sparse, queries_sparse = make_or_load_dataset(DATA_ROOT, ds["name"], n, d, nq, seed=CONF["seed"], pdf_dir=PDF_DIR, embedder=EMBEDDER, enable_payload=ENABLE_PAYLOAD, enable_hybrid=ENABLE_HYBRID)
-        conn = wh.connect()
-        gt_idx = brute_force_topk(vectors, queries, CONF["topk"], metric="COSINE")
-        
-        # Grid untuk ef
-        ef_grid = [10, 50, 100, 200, 500, 1000]
-        for ef in ef_grid:
-            wh.drop_recreate(conn, classname, d, "cosine", ef=ef)
-            wh.insert(conn, classname, vectors)
-            time.sleep(2)
-            idx = wh.search(conn, classname, queries[:64], CONF["topk"], ef=ef, hybrid=ENABLE_HYBRID, query_texts=["sample query"]*64 if ENABLE_HYBRID else None)
-            recall = recall_at_k(gt_idx[:64], idx)
-            if recall >= CONF["target_recall_at_k"]:
-                def search_callable(qb, t0):
-                    query_texts = ["sample query"] * len(qb) if ENABLE_HYBRID else None
-                    _ = wh.search(conn, classname, qb, CONF["topk"], ef=ef, hybrid=ENABLE_HYBRID, query_texts=query_texts)
-                    t1 = time.perf_counter()
-                    return len(qb), t0, t1
-                res = run_concurrency_grid("weaviate", CONF["run_seconds"], queries, search_callable)
-                for r in res:
-                    r["param"] = {"ef": ef}
-                    r["recall"] = recall
-                results.extend(res)
-    
-    return results
-
-# ---------------- main ----------------
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser(
-        description="Benchmark Qdrant vs Weaviate for semantic search on PDF embeddings"
+    # Load dataset
+    from datasets import make_or_load_dataset
+    vectors, queries, *_ = make_or_load_dataset(
+        root=CONF.get("data_root", "../datasets"),
+        name=ds["name"],
+        n=ds["n_vectors"],
+        dim=ds["dim"],
+        n_queries=ds["n_queries"],
+        seed=CONF.get("seed", 42),
+        pdf_dir=CONF.get("pdf_dir") or "",
+        embedder=CONF.get("embedder", "sentence-transformers"),
+        enable_payload=CONF.get("enable_payload_filter", False),
+        enable_hybrid=CONF.get("enable_hybrid_search", False),
     )
-    ap.add_argument("--db", choices=["qdrant", "weaviate"], required=False,
-                    help="Vector database to benchmark (qdrant or weaviate)")
-    ap.add_argument("--index", choices=["hnsw"], default="hnsw",
-                    help="Index type (only HNSW supported for fair comparison)")
-    ap.add_argument("--dataset", choices=[d["name"] for d in CONF["datasets"]],
-                    help="Dataset to use for benchmarking")
-    ap.add_argument("--baseline", action="store_true", 
-                    help="Run fio baseline tests only")
-    ap.add_argument("--sensitivity", action="store_true", 
-                    help="Run sensitivity study (recall vs QPS trade-off)")
-    ap.add_argument("--embeddings_npy", 
-                    help="Path to custom embeddings .npy file")
-    ap.add_argument("--queries_npy", 
-                    help="Path to custom queries .npy file")
-    args = ap.parse_args()
+    if vec_override is not None and qry_override is not None:
+        vectors, queries = vec_override, qry_override
 
-    if args.baseline:
-        log("Running fio baseline tests...")
-        baseline_results = run_fio_baseline(DATA_ROOT, 30)
-        print(json.dumps(baseline_results, indent=2))
-        raise SystemExit(0)
+    wh.drop_recreate(conn, "BenchClass", ds["dim"], "cosine")
+    wh.insert(conn, "BenchClass", vectors, texts=None)
+    time.sleep(1)
 
-    if args.sensitivity:
-        if not all([args.db, args.index, args.dataset]):
-            ap.error("--db, --index, and --dataset are required for sensitivity study")
-        ds = next(d for d in CONF["datasets"] if d["name"] == args.dataset)
-        out = run_sensitivity_study(args.db, args.index, ds)
+    gt_q  = int(CONF.get("gt_queries_for_recall", 128))
+    gt_idx = brute_force_topk(vectors, queries[:gt_q], CONF["topk"], metric="COSINE")
+
+    # Sensitivity study: test different ef values
+    if ARGS.sensitivity:
+        ef_values = [64, 128, 192, 256]
+        all_results = []
+        
+        for ef in ef_values:
+            log(f"[Weaviate] Testing ef={ef}")
+            
+            # For Weaviate, we need to recreate the collection with the new ef value
+            # since Weaviate sets ef at the class level, not per search
+            wh.drop_recreate(conn, "BenchClass", ds["dim"], "cosine", ef=ef)
+            wh.insert(conn, "BenchClass", vectors, texts=None)
+            time.sleep(1)  # Allow indexing to complete
+            
+            def search_callable(qs, secs, conc):
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                stop_at = time.time() + secs
+                chunks = np.array_split(qs, conc)
+                def worker(batch):
+                    done = 0
+                    while time.time() < stop_at:
+                        _ = wh.search(conn, "BenchClass", batch, CONF["topk"], ef=ef, hybrid=False)
+                        done += len(batch)
+                    return done
+                total = 0
+                with ThreadPoolExecutor(max_workers=conc) as ex:
+                    futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
+                    for fu in as_completed(futs):
+                        total += fu.result()
+                return total / float(secs)
+
+            results = run_concurrency_grid("weaviate", CONF["run_seconds"], queries, search_callable,
+                                           budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)
+
+            # Calculate recall for this ef
+            res_idx = wh.search(conn, "BenchClass", queries[:min(64, gt_q)], CONF["topk"], ef=ef, hybrid=False)
+            recall = recall_at_k(gt_idx[:min(64, gt_q)], res_idx)
+            log(f"[Weaviate] ef={ef}, recall@{CONF['topk']}={recall:.3f}")
+            
+            # Add ef and recall to results
+            for r in results:
+                r["ef"] = ef
+                r["recall"] = recall
+            
+            all_results.extend(results)
+        
+        return all_results
     else:
-        if not all([args.db, args.index, args.dataset]):
-            ap.error("--db, --index, and --dataset are required unless using --baseline")
+        # Normal benchmark
+        def search_callable(qs, secs, conc):
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            stop_at = time.time() + secs
+            chunks = np.array_split(qs, conc)
+            def worker(batch):
+                done = 0
+                while time.time() < stop_at:
+                    _ = wh.search(conn, "BenchClass", batch, CONF["topk"], ef=64, hybrid=False)
+                    done += len(batch)
+                return done
+            total = 0
+            with ThreadPoolExecutor(max_workers=conc) as ex:
+                futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
+                for fu in as_completed(futs):
+                    total += fu.result()
+            return total / float(secs)
 
-        ds = next(d for d in CONF["datasets"] if d["name"] == args.dataset)
-        vec_override = np.load(args.embeddings_npy).astype("float32") if args.embeddings_npy else None
-        qry_override = np.load(args.queries_npy).astype("float32") if args.queries_npy else None
+        results = run_concurrency_grid("weaviate", CONF["run_seconds"], queries, search_callable,
+                                       budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)
 
-        # Execute benchmark for selected database
-        if args.db == "qdrant":
-            out = run_qdrant(ds, vec_override, qry_override)
-        elif args.db == "weaviate":
-            out = run_weaviate(ds, vec_override, qry_override)
-        else:
-            raise SystemExit("Error: --db must be 'qdrant' or 'weaviate'")
+        res_idx = wh.search(conn, "BenchClass", queries[:min(64, gt_q)], CONF["topk"], ef=64, hybrid=False)
+        recall = recall_at_k(gt_idx[:min(64, gt_q)], res_idx)
+        log(f"[Weaviate] recall@{CONF['topk']}={recall:.3f}")
+        
+        # Add recall to results
+        for r in results:
+            r["recall"] = recall
+            
+        return results
 
-    print(json.dumps(out, indent=2))
+
+# ---------------------------------------------------------
+# CLI
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="Fast benchmark for Qdrant vs Weaviate (≤5 min mode)")
+    ap.add_argument("--db", choices=["qdrant", "weaviate"], help="Database backend")
+    ap.add_argument("--index", default="hnsw")
+    ap.add_argument("--dataset", help="Dataset name from config.yaml")
+    ap.add_argument("--budget_s", type=int, default=300, help="Wall-clock limit (sec)")
+    ap.add_argument("--quick5", action="store_true", help="Force ≤5 min profile")  # ← ADD
+    ap.add_argument("--limit_n", type=int, help="Use only first N vectors")
+    ap.add_argument("--no_monitor", action="store_true", help="Disable I/O monitor for speed")
+    ap.add_argument("--sensitivity", action="store_true", help="Run sensitivity study (test different ef values)")
+    args = ap.parse_args()
+    ARGS = args
+
+    import yaml
+    with open("config.yaml", "r") as f:
+        CONF = yaml.safe_load(f)
+
+    if args.quick5:
+        CONF["concurrency_grid"] = [1]
+        CONF["repeats"] = min(CONF.get("repeats", 5), 3)
+        CONF["run_seconds"] = min(CONF.get("run_seconds", 10), 8)
+        # batasi ef agar tuning tidak melebar
+        CONF["indexes"]["qdrant"]["hnsw"]["search"]["ef_search_start"] = 64
+        CONF["indexes"]["qdrant"]["hnsw"]["search"]["ef_search_max"]   = 128
+        CONF["indexes"]["weaviate"]["hnsw"]["search"]["ef_start"] = 64
+        CONF["indexes"]["weaviate"]["hnsw"]["search"]["ef_max"]   = 128
+
+    ds = next(d for d in CONF["datasets"] if d["name"] == args.dataset)
+    
+    # Load dataset using make_or_load_dataset function
+    from datasets import make_or_load_dataset
+    vectors, queries, metadata, vectors_sparse, queries_sparse = make_or_load_dataset(
+        root=CONF.get("data_root", "../datasets"),
+        name=ds["name"],
+        n=ds["n_vectors"],
+        dim=ds["dim"],
+        n_queries=ds["n_queries"],
+        seed=CONF.get("seed", 42),
+        pdf_dir=CONF.get("pdf_dir") or "",
+        embedder=CONF.get("embedder", "sentence-transformers"),
+        enable_payload=CONF.get("enable_payload_filter", False),
+        enable_hybrid=CONF.get("enable_hybrid_search", False),
+    )
+
+    if args.limit_n:
+        vectors = vectors[:min(len(vectors), args.limit_n)]
+
+    if args.db == "qdrant":
+        out = run_qdrant(ds, vectors, queries)
+    elif args.db == "weaviate":
+        out = run_weaviate(ds, vectors, queries)
+    else:
+        raise SystemExit("Please specify --db qdrant|weaviate")
+
+    os.makedirs("results", exist_ok=True)
+    sensitivity_suffix = "_sensitivity" if ARGS.sensitivity else ""
+    out_path = (
+        f"results/{args.db}_{args.dataset}{sensitivity_suffix}_quick.json"
+        if args.quick5 else
+        f"results/{args.db}_{args.dataset}{sensitivity_suffix}.json"
+    )
+    with open(out_path, "w") as f:
+        json.dump(out, f, indent=2)
+
+

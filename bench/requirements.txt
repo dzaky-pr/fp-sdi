@@ -14,9 +14,8 @@ weaviate-client==3.25.3
 
 # PDF processing and embedding
 PyPDF2>=3.0
-sentence-transformers>=2.2
+sentence-transformers==2.2.2
 rank-bm25>=0.2
 
 # Analysis
 matplotlib>=3.5
-pandas>=2.0

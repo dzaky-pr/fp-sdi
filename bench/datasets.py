@@ -126,6 +126,13 @@ def make_or_load_dataset(root, name, n, dim, n_queries, seed=42, pdf_dir=None, e
             queries = r.normal(0.0, 1.0, size=(n_queries, dim)).astype("float32")
             if enable_payload:
                 metadata = [{"synthetic": True, "id": i} for i in range(n)]
+            if enable_payload:
+                import random
+                metadata = [{
+                    "synthetic": True,
+                    "id": i,
+                    "group": "A" if random.random() < 0.5 else "B"
+                } for i in range(n)]
                 import json
                 with open(meta_path, 'w') as f:
                     json.dump(metadata, f)

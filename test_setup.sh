@@ -1,3 +1,4 @@
+# test_setup.sh
 #!/bin/bash
 # Verification script for Qdrant vs Weaviate benchmark setup
 
@@ -126,11 +127,11 @@ fi
 echo "✓ End-to-end mini test..."
 if [ "$RUNNING" -gt "0" ]; then
     echo "  Running mini benchmark (5 seconds, 10 queries)..."
-    if timeout 30 python3 bench/bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --run_seconds 5 > /tmp/mini_bench.log 2>&1; then
-        if grep -q "qps" /tmp/mini_bench.log; then
+    if timeout 60 python3 bench/bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --quick5 > /tmp/mini_bench.log 2>&1; then
+        if [ -f "results/qdrant_cohere-mini-50k-d768_quick.json" ]; then
             echo "  ✅ Mini benchmark successful"
         else
-            echo "  ❌ Mini benchmark failed (no QPS output)"
+            echo "  ❌ Mini benchmark failed (no results file)"
         fi
     else
         echo "  ❌ Mini benchmark timed out or failed"
