@@ -1,4 +1,4 @@
-# bench/requirements.txt
+# /bench/requirements.txt
 numpy>=1.26
 scipy>=1.11
 pandas>=2.2

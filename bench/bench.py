@@ -1,4 +1,4 @@
-# bench/bench.py
+# /bench/bench.py
 #!/usr/bin/env python3
 import argparse, json, os, time, threading, numpy as np
 from datetime import datetime
@@ -50,7 +50,8 @@ def run_concurrency_grid(container_name, run_seconds, queries, search_callable,
 
             # Warm-up kecil, abaikan error
             try:
-                _ = search_callable(queries[:min(64, len(queries))], 1, conc)
+                warmup_result = search_callable(queries[:min(64, len(queries))], 1, conc)
+                _ = warmup_result[0] if isinstance(warmup_result, tuple) else warmup_result
                 time.sleep(0.3)
             except Exception as e:
                 log(f"[{container_name}] Warm-up failed: {e}")
@@ -74,9 +75,14 @@ def run_concurrency_grid(container_name, run_seconds, queries, search_callable,
             if not disable_monitor:
                 cpu_thread.start()
 
-            # Run benchmark
+            # Run benchmark with latency tracking
             t0 = time.time()
-            qps = search_callable(queries, run_seconds, conc)  # <- conc diteruskan
+            result = search_callable(queries, run_seconds, conc)
+            if isinstance(result, tuple) and len(result) == 2:
+                qps, latencies = result
+            else:
+                qps = result
+                latencies = []
             elapsed = time.time() - t0
 
             # Stop monitors
@@ -92,6 +98,27 @@ def run_concurrency_grid(container_name, run_seconds, queries, search_callable,
             read_mb  = float(io_stats.get('read_mb', 0.0))
             write_mb = float(io_stats.get('write_mb', 0.0))
 
+            # Calculate latency percentiles
+            latency_stats = {}
+            if latencies and len(latencies) > 0:
+                latency_stats = {
+                    "min_latency_ms": float(np.min(latencies)) * 1000,
+                    "mean_latency_ms": float(np.mean(latencies)) * 1000,
+                    "p50_latency_ms": float(np.percentile(latencies, 50)) * 1000,
+                    "p95_latency_ms": float(np.percentile(latencies, 95)) * 1000,
+                    "p99_latency_ms": float(np.percentile(latencies, 99)) * 1000,
+                    "max_latency_ms": float(np.max(latencies)) * 1000,
+                }
+            else:
+                latency_stats = {
+                    "min_latency_ms": None,
+                    "mean_latency_ms": None,
+                    "p50_latency_ms": None,
+                    "p95_latency_ms": None,
+                    "p99_latency_ms": None,
+                    "max_latency_ms": None,
+                }
+
             results.append({
                 "conc": conc,
                 "qps": qps,
@@ -100,6 +127,7 @@ def run_concurrency_grid(container_name, run_seconds, queries, search_callable,
                 "read_mb": read_mb,
                 "write_mb": write_mb,
                 "elapsed": elapsed,
+                **latency_stats  # Add latency statistics
             })
     return results
 
@@ -143,59 +171,78 @@ def run_qdrant(ds, vec_override=None, qry_override=None):
         for ef in ef_values:
             log(f"[Qdrant] Testing ef_search={ef}")
             
-            # callable yang menghormati concurrency
-            def search_callable(qs, secs, conc):
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                stop_at = time.time() + secs
-                chunks = np.array_split(qs, conc)
-                def worker(batch):
-                    done = 0
-                    while time.time() < stop_at:
-                        _ = qc.search(conn, "bench", batch, CONF["topk"], ef_search=ef)
-                        done += len(batch)
-                    return done
-                total = 0
-                with ThreadPoolExecutor(max_workers=conc) as ex:
-                    futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
-                    for fu in as_completed(futs):
-                        total += fu.result()
-                return total / float(secs)
-
-            results = run_concurrency_grid("qdrant", CONF["run_seconds"], queries, search_callable,
-                                           budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)
-
-            # Calculate recall for this ef
-            res_idx = qc.search(conn, "bench", queries[:min(64, gt_q)], CONF["topk"], ef_search=ef)
-            recall = recall_at_k(gt_idx[:min(64, gt_q)], res_idx)
-            log(f"[Qdrant] ef={ef}, recall@{CONF['topk']}={recall:.3f}")
-            
-            # Add ef and recall to results
-            for r in results:
-                r["ef"] = ef
-                r["recall"] = recall
-            
-            all_results.extend(results)
-        
-        return all_results
-    else:
-        # Normal benchmark with fixed ef
-        # callable yang menghormati concurrency
+        # callable yang menghormati concurrency dan track latency
         def search_callable(qs, secs, conc):
             from concurrent.futures import ThreadPoolExecutor, as_completed
             stop_at = time.time() + secs
             chunks = np.array_split(qs, conc)
+            all_latencies = []
+            
             def worker(batch):
                 done = 0
+                worker_latencies = []
                 while time.time() < stop_at:
-                    _ = qc.search(conn, "bench", batch, CONF["topk"], ef_search=64)
+                    t_start = time.time()
+                    _ = qc.search(conn, "bench", batch, CONF["topk"], ef_search=ef)
+                    t_end = time.time()
+                    worker_latencies.append(t_end - t_start)
                     done += len(batch)
-                return done
+                return done, worker_latencies
+                
             total = 0
             with ThreadPoolExecutor(max_workers=conc) as ex:
                 futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
                 for fu in as_completed(futs):
-                    total += fu.result()
-            return total / float(secs)
+                    worker_total, worker_latencies = fu.result()
+                    total += worker_total
+                    all_latencies.extend(worker_latencies)
+            
+            return total / float(secs), all_latencies
+
+        results = run_concurrency_grid("qdrant", CONF["run_seconds"], queries, search_callable,
+                                       budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)
+
+        # Calculate recall for this ef
+        res_idx = qc.search(conn, "bench", queries[:min(64, gt_q)], CONF["topk"], ef_search=ef)
+        recall = recall_at_k(gt_idx[:min(64, gt_q)], res_idx)
+        log(f"[Qdrant] ef={ef}, recall@{CONF['topk']}={recall:.3f}")
+        
+        # Add ef and recall to results
+        for r in results:
+            r["ef"] = ef
+            r["recall"] = recall
+        
+        all_results.extend(results)
+        
+        return all_results
+    else:
+        # Normal benchmark with fixed ef and latency tracking
+        def search_callable(qs, secs, conc):
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            stop_at = time.time() + secs
+            chunks = np.array_split(qs, conc)
+            all_latencies = []
+            
+            def worker(batch):
+                done = 0
+                worker_latencies = []
+                while time.time() < stop_at:
+                    t_start = time.time()
+                    _ = qc.search(conn, "bench", batch, CONF["topk"], ef_search=64)
+                    t_end = time.time()
+                    worker_latencies.append(t_end - t_start)
+                    done += len(batch)
+                return done, worker_latencies
+                
+            total = 0
+            with ThreadPoolExecutor(max_workers=conc) as ex:
+                futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
+                for fu in as_completed(futs):
+                    worker_total, worker_latencies = fu.result()
+                    total += worker_total
+                    all_latencies.extend(worker_latencies)
+            
+            return total / float(secs), all_latencies
 
         results = run_concurrency_grid("qdrant", CONF["run_seconds"], queries, search_callable,
                                        budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)
@@ -256,18 +303,28 @@ def run_weaviate(ds, vec_override=None, qry_override=None):
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 stop_at = time.time() + secs
                 chunks = np.array_split(qs, conc)
+                all_latencies = []
+                
                 def worker(batch):
                     done = 0
+                    worker_latencies = []
                     while time.time() < stop_at:
+                        t_start = time.time()
                         _ = wh.search(conn, "BenchClass", batch, CONF["topk"], ef=ef, hybrid=False)
+                        t_end = time.time()
+                        worker_latencies.append(t_end - t_start)
                         done += len(batch)
-                    return done
+                    return done, worker_latencies
+                    
                 total = 0
                 with ThreadPoolExecutor(max_workers=conc) as ex:
                     futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
                     for fu in as_completed(futs):
-                        total += fu.result()
-                return total / float(secs)
+                        worker_total, worker_latencies = fu.result()
+                        total += worker_total
+                        all_latencies.extend(worker_latencies)
+                
+                return total / float(secs), all_latencies
 
             results = run_concurrency_grid("weaviate", CONF["run_seconds"], queries, search_callable,
                                            budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)
@@ -286,23 +343,33 @@ def run_weaviate(ds, vec_override=None, qry_override=None):
         
         return all_results
     else:
-        # Normal benchmark
+        # Normal benchmark with latency tracking
         def search_callable(qs, secs, conc):
             from concurrent.futures import ThreadPoolExecutor, as_completed
             stop_at = time.time() + secs
             chunks = np.array_split(qs, conc)
+            all_latencies = []
+            
             def worker(batch):
                 done = 0
+                worker_latencies = []
                 while time.time() < stop_at:
+                    t_start = time.time()
                     _ = wh.search(conn, "BenchClass", batch, CONF["topk"], ef=64, hybrid=False)
+                    t_end = time.time()
+                    worker_latencies.append(t_end - t_start)
                     done += len(batch)
-                return done
+                return done, worker_latencies
+                
             total = 0
             with ThreadPoolExecutor(max_workers=conc) as ex:
                 futs = [ex.submit(worker, b) for b in chunks if len(b) > 0]
                 for fu in as_completed(futs):
-                    total += fu.result()
-            return total / float(secs)
+                    worker_total, worker_latencies = fu.result()
+                    total += worker_total
+                    all_latencies.extend(worker_latencies)
+            
+            return total / float(secs), all_latencies
 
         results = run_concurrency_grid("weaviate", CONF["run_seconds"], queries, search_callable,
                                        budget_s=ARGS.budget_s, disable_monitor=ARGS.no_monitor)

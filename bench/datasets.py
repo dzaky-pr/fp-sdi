@@ -1,4 +1,4 @@
-# bench/datasets.py
+# /bench/datasets.py
 import os, numpy as np, pathlib, random, PyPDF2, re
 try:
     from sentence_transformers import SentenceTransformer

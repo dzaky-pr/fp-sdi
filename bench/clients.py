@@ -1,4 +1,4 @@
-# bench/clients.py
+# /bench/clients.py
 
 import numpy as np
 import weaviate

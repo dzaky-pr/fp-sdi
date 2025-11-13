@@ -1,4 +1,4 @@
-# bench/utils.py
+# /bench/utils.py
 import time, math, statistics, numpy as np, subprocess
 from typing import List
 
