@@ -37,7 +37,7 @@ qdrant/storage/
 qdrant/*.log
 weaviate/data/
 weaviate/*.log
-results/
+
 *.csv
 *.json
 bench_results_*.json
