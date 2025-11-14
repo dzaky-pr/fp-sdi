@@ -23,6 +23,7 @@ help:
 	@echo "Benchmark commands (run dari bench-shell):"
 	@echo "  python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768"
 	@echo "  python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768"
+	@echo "  python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --sensitivity"
 	@echo ""
 
 build:

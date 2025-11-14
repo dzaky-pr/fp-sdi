@@ -126,8 +126,8 @@ fi
 # 9. End-to-end mini benchmark
 echo "✓ End-to-end mini test..."
 if [ "$RUNNING" -gt "0" ]; then
-    echo "  Running mini benchmark (5 seconds, 10 queries)..."
-    if timeout 60 python3 bench/bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --quick5 > /tmp/mini_bench.log 2>&1; then
+    echo "  Running mini benchmark (30 seconds budget)..."
+    if timeout 60 python3 bench/bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --budget_s 30 > /tmp/mini_bench.log 2>&1; then
         if [ -f "results/qdrant_cohere-mini-50k-d768_quick.json" ]; then
             echo "  ✅ Mini benchmark successful"
         else

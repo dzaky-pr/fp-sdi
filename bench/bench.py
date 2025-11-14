@@ -89,8 +89,8 @@ def run_concurrency_grid(container_name, run_seconds, queries, search_callable,
             cpu_monitoring = False
             if not disable_monitor:
                 io_monitor.stop_monitoring()
-            io_thread.join(timeout=1)
-            cpu_thread.join(timeout=1)
+                io_thread.join(timeout=1)
+                cpu_thread.join(timeout=1)
 
             cpu_mean = float(np.mean(cpu_values)) if cpu_values else 0.0
             io_stats = io_monitor.parse_bandwidth() if not disable_monitor else {}
@@ -442,12 +442,14 @@ if __name__ == "__main__":
     else:
         raise SystemExit("Please specify --db qdrant|weaviate")
 
-    os.makedirs("results", exist_ok=True)
+    # Save to /results (mounted at project root) instead of /app/results
+    results_dir = "/results" if os.path.exists("/results") else "results"
+    os.makedirs(results_dir, exist_ok=True)
     sensitivity_suffix = "_sensitivity" if ARGS.sensitivity else ""
     out_path = (
-        f"results/{args.db}_{args.dataset}{sensitivity_suffix}_quick.json"
+        f"{results_dir}/{args.db}_{args.dataset}{sensitivity_suffix}_quick.json"
         if args.quick5 else
-        f"results/{args.db}_{args.dataset}{sensitivity_suffix}.json"
+        f"{results_dir}/{args.db}_{args.dataset}{sensitivity_suffix}.json"
     )
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)

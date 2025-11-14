@@ -181,42 +181,40 @@ docker compose stop qdrant && docker compose start weaviate
 # Then in bench-shell:
 python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768
 
-# Mode Cepat (≤5 menit per run) - REKOMENDASI UNTUK PEMULA:
-# Mode cepat (≤5 menit per run) - REKOMENDASI UNTUK PEMULA:
-python3 bench.py --db qdrant   --index hnsw --dataset cohere-mini-50k-d768 --quick5
-python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 --quick5
-
+# Standard benchmark commands
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768
+python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768
 
 # Optional: Run on all datasets for comprehensive comparison
 # ===========================================
 # BASELINE (Low-dim) - Qdrant
 # ===========================================
 # From host: docker compose stop weaviate
-python3 bench.py --db qdrant --index hnsw --dataset msmarco-mini-10k-d384 > /app/results_qdrant_baseline.json
+python3 bench.py --db qdrant --index hnsw --dataset msmarco-mini-10k-d384
 
 # ===========================================
 # BASELINE (Low-dim) - Weaviate
 # ===========================================
 # From host: docker compose stop qdrant && docker compose start weaviate
-python3 bench.py --db weaviate --index hnsw --dataset msmarco-mini-10k-d384 > /app/results_weaviate_baseline.json
+python3 bench.py --db weaviate --index hnsw --dataset msmarco-mini-10k-d384
 
 # ===========================================
 # STRESS (High-dim) - Qdrant
 # ===========================================
 # From host: docker compose stop weaviate
-python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536 > /app/results_qdrant_stress.json
+python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536
 
 # ===========================================
 # STRESS (High-dim) - Weaviate
 # ===========================================
 # From host: docker compose stop qdrant && docker compose start weaviate
-python3 bench.py --db weaviate --index hnsw --dataset openai-ada-10k-d1536 > /app/results_weaviate_stress.json
+python3 bench.py --db weaviate --index hnsw --dataset openai-ada-10k-d1536
 
 # Exit bench container
 exit
 
 # Analyze results (compare all datasets)
-python3 bench/analyze_results.py --results results_qdrant_baseline.json results_weaviate_baseline.json results_qdrant.json results_weaviate.json results_qdrant_stress.json results_weaviate_stress.json
+python3 bench/analyze_results.py --results results/qdrant_msmarco-mini-10k-d384.json results/weaviate_msmarco-mini-10k-d384.json results/qdrant_cohere-mini-50k-d768.json results/weaviate_cohere-mini-50k-d768.json results/qdrant_openai-ada-10k-d1536.json results/weaviate_openai-ada-10k-d1536.json
 ```
 
 ---
@@ -368,7 +366,7 @@ python3 bench/analyze_results.py --results results_qdrant.json results_weaviate.
 
 ## 📊 Expected Performance
 
-Berdasarkan testing di MacBook Pro 13-inch (2020, Intel Core i5, 8GB RAM) dengan dataset `cohere-mini-50k-d768` (50k vectors, 768D). **Benchmark dijalankan sequential** (satu database aktif) untuk fairness.
+Berdasarkan testing di MacBook Pro 13-inch (2020, Intel Core i5, 8GB RAM) dengan dataset `cohere-mini-50k-d768` (50k vectors, 768D). **Benchmark dijalankan sequential** (satu database aktif) untuk fairness. Results automatically saved to `results/` directory.
 
 ### Qdrant
 
@@ -592,10 +590,7 @@ docker compose start qdrant weaviate bench
 ### Benchmark Options
 
 ```bash
-# Quick benchmark (mode cepat ≤5 menit per database)
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --quick5
-
-# Standard benchmark (mode lengkap untuk penelitian)
+# Standard benchmark
 python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768
 
 # Benchmark on different datasets
@@ -603,11 +598,15 @@ python3 bench.py --db qdrant --index hnsw --dataset msmarco-mini-10k-d384    # B
 python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768     # Main (medium-dim)
 python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536     # Stress (high-dim)
 
-# Sensitivity study (parameter tuning ef_search/ef)
+# Sensitivity study (parameter tuning ef_search/ef
 python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --sensitivity
 
 # I/O baseline test
 python3 bench.py --baseline
+
+# Optional flags for resource-constrained environments
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --quick5      # Quick mode (≤5 min)
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --limit_n 3000  # Limit vectors
 
 # Custom embeddings
 python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --embeddings_npy path/to/custom.npy
@@ -690,9 +689,9 @@ on_disk: false
 **Solutions**:
 
 ```bash
-# Use --limit_n to reduce dataset size:
+# If experiencing memory issues, optionally use --limit_n to reduce dataset size:
 # For medium datasets (768D):
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --limit_n 5000
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --limit_n 3000
 
 # For high-dim datasets (1536D):
 python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536 --limit_n 2000
@@ -921,9 +920,10 @@ Berikut adalah hasil lengkap analisis untuk **4 Pertanyaan Penelitian Utama** be
 
 #### **Memory Management Guidelines (8GB RAM Laptop)**
 
-- **384D datasets**: `--limit_n 5000` (aman untuk kedua database)
-- **768D datasets**: `--limit_n 5000` (Qdrant), `--limit_n 3000` (Weaviate)
-- **1536D datasets**: `--limit_n 1000-2000` (kedua database)
+- **384D datasets**: Full dataset (10k vectors) should work fine
+- **768D datasets**: Full dataset (50k vectors) may require monitoring
+- **1536D datasets**: Full dataset (10k vectors) should work, monitor memory usage
+- **Optional**: Use `--limit_n` flag if experiencing memory issues
 
 #### **Key Findings Nomor 3**:
 
@@ -970,11 +970,11 @@ Berikut adalah hasil lengkap analisis untuk **4 Pertanyaan Penelitian Utama** be
 
 #### **Memory Management Guidelines (8GB RAM Laptop)**
 
-| Dimensi   | Dataset Size | Qdrant Limit     | Weaviate Limit   | Reasoning             |
-| --------- | ------------ | ---------------- | ---------------- | --------------------- |
-| **384D**  | 10k-50k      | `--limit_n 5000` | `--limit_n 5000` | Low memory footprint  |
-| **768D**  | 10k-50k      | `--limit_n 5000` | `--limit_n 3000` | Medium memory usage   |
-| **1536D** | 10k          | `--limit_n 2000` | `--limit_n 2000` | High memory footprint |
+| Dimensi   | Dataset Size | Memory Usage | Recommendation | Notes                  |
+| --------- | ------------ | ------------ | -------------- | ---------------------- |
+| **384D**  | 10k          | Low          | Full dataset   | ~384MB per 10k vectors |
+| **768D**  | 50k          | Medium       | Full dataset   | ~1.5GB per 50k vectors |
+| **1536D** | 10k          | High         | Monitor memory | ~600MB per 10k vectors |
 
 #### **Key Findings Nomor 4**:
 
@@ -1119,10 +1119,10 @@ A: Biasanya karena `curl`/`wget` tidak tersedia di container. Restart dengan `ma
 A: Ya! Fokus pada HNSW comparison (apple-to-apple), metodologi paper tetap diikuti.
 
 **Q: Berapa lama total waktu eksekusi?**  
-A: **Mode cepat (--quick5)**: ≤5 menit per database, ≤30 menit untuk semua skenario. **Mode lengkap**: 8-12 menit per dataset per database, ~1.5-2 jam untuk complete study 4 pertanyaan penelitian. Sequential untuk fairness!
+A: **Standard benchmark**: 8-12 menit per dataset per database, ~1.5-2 jam untuk complete study 4 pertanyaan penelitian. **Optional quick mode (--quick5)**: ≤5 menit per database for testing. Sequential untuk fairness!
 
 **Q: Bagaimana cara menghemat waktu untuk eksplorasi awal?**  
-A: Gunakan `--quick5` untuk verifikasi setup dan explore pattern. Setelah yakin, jalankan mode lengkap untuk data penelitian final.
+A: Gunakan `--budget_s 60` atau `--quick5` untuk verifikasi setup dan explore pattern. Setelah yakin, jalankan mode lengkap untuk data penelitian final.
 
 **Q: Mengapa jalan satu per satu (sequential)?**  
 A: Untuk fairness comparison! Jika paralel, kedua database berebut resource (CPU/RAM/I/O) sehingga hasil tidak akurat. Laptop/workstation resource terbatas.
@@ -1145,16 +1145,16 @@ A: Jika punya hardware powerful (16GB+ RAM), uncomment di `docker-compose.yml`. 
 
 Berikut adalah panduan lengkap untuk menjawab 4 pertanyaan penelitian utama melalui benchmark praktis. Setiap pertanyaan disertai penjelasan konseptual, langkah-langkah eksekusi spesifik, dan opsi mode cepat (≤5 menit) untuk eksperimen awal.
 
-### ⚡ Mode Cepat vs Mode Lengkap
+### Mode Standard vs Mode Cepat
 
-**Mode Cepat (--quick5)**: ≤5 menit per database, cocok untuk eksplorasi awal dan verifikasi setup.
+**Mode Standard (recommended)**: 8-12 menit per database, untuk hasil penelitian yang akurat.
 
-- Concurrency: hanya 1 worker
-- Repeats: maksimal 3×
-- Run time: maksimal 8 detik per test
-- ef range: terbatas 64-128
+- Concurrency: 1-2 workers untuk uji skalabilitas
+- Repeats: 5× untuk reliability
+- Run time: 10 detik per test
+- ef range: 64-256 untuk sensitivity study
 
-**Mode Lengkap**: 8-12 menit per database, untuk hasil penelitian final.
+**Mode Cepat (--quick5, optional)**: ≤5 menit per database, cocok untuk eksplorasi awal dan verifikasi setup.
 
 - Concurrency: 1-2 workers untuk uji skalabilitas
 - Repeats: 5× untuk reliability
@@ -1179,11 +1179,11 @@ make bench-shell
 docker compose stop weaviate
 
 # Jalankan benchmark Qdrant (di bench-shell):
-# Mode cepat (≤5 menit, untuk eksplorasi awal):
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --quick5
-
-# Mode lengkap (untuk hasil final):
+# Standard mode (for research results):
 python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768
+
+# Optional quick mode for testing:
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --quick5
 
 # ===========================================
 # STEP 2: Test Weaviate dengan Hybrid Search
@@ -1192,11 +1192,11 @@ python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768
 docker compose stop qdrant && docker compose start weaviate
 
 # Jalankan benchmark Weaviate (di bench-shell):
-# Mode cepat:
-python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 --quick5
-
-# Mode lengkap:
+# Standard mode:
 python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768
+
+# Optional quick mode for testing:
+python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 --quick5
 
 # ===========================================
 # STEP 3: Analisis Perbandingan
@@ -1295,11 +1295,11 @@ docker compose stop weaviate
 # Baseline (low-dim, 384D):
 python3 bench.py --db qdrant --index hnsw --dataset msmarco-mini-10k-d384
 
-# Main (medium-dim, 768D) - GUNAKAN --limit_n 5000 jika memory limited:
-python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768 --limit_n 5000
+# Main (medium-dim, 768D):
+python3 bench.py --db qdrant --index hnsw --dataset cohere-mini-50k-d768
 
-# Stress (high-dim, 1536D) - GUNAKAN --limit_n 2000 jika memory limited:
-python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536 --limit_n 2000
+# Stress (high-dim, 1536D):
+python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536
 
 # ===========================================
 # STEP 2: Test Skalabilitas Weaviate
@@ -1308,8 +1308,8 @@ docker compose stop qdrant && docker compose start weaviate
 
 # Test pada semua dataset:
 python3 bench.py --db weaviate --index hnsw --dataset msmarco-mini-10k-d384
-python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 --limit_n 5000
-python3 bench.py --db weaviate --index hnsw --dataset openai-ada-10k-d1536 --limit_n 2000
+python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768
+python3 bench.py --db weaviate --index hnsw --dataset openai-ada-10k-d1536
 
 # ===========================================
 # STEP 3: Analisis Bottleneck Detection
@@ -1363,14 +1363,14 @@ python3 bench.py --db qdrant --index hnsw --dataset openai-ada-10k-d1536 --limit
 docker compose stop qdrant && docker compose start weaviate
 
 python3 bench.py --db weaviate --index hnsw --dataset msmarco-mini-10k-d384
-python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 --limit_n 5000
-python3 bench.py --db weaviate --index hnsw --dataset openai-ada-10k-d1536 --limit_n 2000
+python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768
+python3 bench.py --db weaviate --index hnsw --dataset openai-ada-10k-d1536
 
 # ===========================================
 # STEP 3: Comprehensive Analysis
 # ===========================================
 exit
-python3 bench/analyze_results.py --results results/qdrant_msmarco-mini-10k-d384.json results/qdrant_cohere-mini-50k-d768.json results/qdrant_openai-ada-10k-d1536.json results/weaviate_msmarco-mini-10k-d384.json results/weaviate_cohere-mini-50k-d768.json results/weaviate_openai-ada-10k-d1536.json
+python3 bench/analyze_results.py --results results/*.json
 ```
 
 **Dimensi vs Performance Matrix**:
@@ -1397,15 +1397,7 @@ python3 bench/analyze_results.py --results results/qdrant_msmarco-mini-10k-d384.
 
 ## ⏱️ Estimasi Waktu Eksekusi
 
-### Mode Cepat (--quick5)
-
-| Skenario            | Per Database | Total     |
-| ------------------- | ------------ | --------- |
-| Single dataset test | ≤5 menit     | ≤10 menit |
-| All datasets (3×)   | ≤15 menit    | ≤30 menit |
-| Sensitivity study   | ≤8 menit     | ≤16 menit |
-
-### Mode Lengkap
+### Mode Standard
 
 | Skenario                              | Per Database    | Total         |
 | ------------------------------------- | --------------- | ------------- |
@@ -1414,9 +1406,17 @@ python3 bench/analyze_results.py --results results/qdrant_msmarco-mini-10k-d384.
 | Sensitivity study                     | 15-20 menit     | 30-40 menit   |
 | **Complete study (semua pertanyaan)** | **45-60 menit** | **1.5-2 jam** |
 
+### Mode Cepat (--quick5, optional)
+
+| Skenario            | Per Database | Total     |
+| ------------------- | ------------ | --------- |
+| Single dataset test | ≤5 menit     | ≤10 menit |
+| All datasets (3×)   | ≤15 menit    | ≤30 menit |
+| Sensitivity study   | ≤8 menit     | ≤16 menit |
+
 ### Rekomendasi Workflow untuk Penelitian
 
-#### Phase 1: Eksplorasi Cepat (≤30 menit total)
+#### Phase 1: Eksplorasi Cepat (≤30 menit total, optional)
 
 ```bash
 # Verifikasi setup dan pattern awal dengan mode cepat
@@ -1432,7 +1432,7 @@ python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 --qui
 #### Phase 2: Data Collection Lengkap (1.5-2 jam total)
 
 ```bash
-# Jalankan semua 4 pertanyaan penelitian dengan mode lengkap
+# Jalankan semua 4 pertanyaan penelitian dengan mode standard
 # Ikuti langkah-langkah detail di section "4 Pertanyaan Penelitian Utama"
 ```
 
@@ -1440,7 +1440,7 @@ python3 bench.py --db weaviate --index hnsw --dataset cohere-mini-50k-d768 --qui
 
 ```bash
 exit
-python3 bench/analyze_results.py --results results_*.json
+python3 bench/analyze_results.py --results results/*.json
 ```
 
 ---
@@ -1464,4 +1464,4 @@ python3 bench.py --help  # Benchmark options
 
 **Happy Benchmarking! 🚀**
 
-_Last updated: October 22, 2025_
+_Last updated: November 14, 2025_
