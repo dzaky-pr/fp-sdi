@@ -15,12 +15,8 @@ datasets:
     n_queries: 1000
     n_vectors: 10000
     name: openai-ada-10k-d1536
-embedder: sentence-transformers
-enable_hybrid_search: true
-enable_payload_filter: true
 
-# Index configurations for Qdrant vs Weaviate (HNSW only)
-# Milvus excluded due to resource constraints and API instability
+# HNSW index parameters
 indexes:
   qdrant:
     hnsw:
@@ -29,22 +25,15 @@ indexes:
         m: 16
       metric: Cosine
       on_disk: true
-      search:
-        ef_search_max: 256
-        ef_search_start: 64
   weaviate:
     hnsw:
       build:
         efConstruction: 200
         maxConnections: 16
       metric: cosine
-      search:
-        ef_max: 256
-        ef_start: 64
-pdf_dir: ""
+
 repeats: 5
 run_seconds: 10
 seed: 42
-sensitivity_study: true
-target_recall_at_k: 0.9
 topk: 10
+gt_queries_for_recall: 128

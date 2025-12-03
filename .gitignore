@@ -7,9 +7,9 @@ __pycache__/
 *.egg-info
 venv/
 .venv/
+.pytest_cache/
+.coverage
 
-# Results & temp files
-results_*.json
 *.tmp
 *.log
 
@@ -27,12 +27,8 @@ results_*.json
 docker-compose.override.yml
 docker-compose.local.yml
 docker-compose.prod.yml
-milvus_data/
 qdrant_data/
 weaviate_data/
-milvus/volumes/
-milvus/logs/
-milvus/*.log
 qdrant/storage/
 qdrant/*.log
 weaviate/data/
@@ -40,6 +36,9 @@ weaviate/*.log
 
 *.csv
 *.json
+!results/*.json
+!bench/config.yaml
+!docker-compose.yml
 bench_results_*.json
 benchmark_*.csv
 *.results
